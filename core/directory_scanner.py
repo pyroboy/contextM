@@ -2,10 +2,11 @@
 import os
 import pathlib
 import traceback
-from PySide6.QtCore import QThread, Signal, Slot
+from PySide6.QtCore import QThread, Signal
 
 # --- Import helpers ---
-from helpers import is_text_file, calculate_tokens
+# from .helpers import is_text_file, calculate_tokens
+from .helpers import calculate_tokens # HACK: Temporarily disable is_text_file
 
 # --- Configuration (needed for the scanner) ---
 MAX_FILE_SIZE_KB = 200 # Example, should ideally match main config
@@ -179,10 +180,9 @@ class DirectoryScanner(QThread):
             if file_size > MAX_FILE_SIZE_BYTES:
                  return False, f"Exceeds size limit ({MAX_FILE_SIZE_KB} KB)"
 
-            # 2. Use is_text_file detection (after size check, as detection reads the file)
-            # Allow empty files without detection check
-            if file_size > 0 and not is_text_file(file_path_str):
-                 return False, "Non-text (detected)"
+            # 2. HACK: Temporarily disabled is_text_file detection
+            # if file_size > 0 and not is_text_file(file_path_str):
+            #      return False, "Non-text (detected)"
 
             # If all checks pass (readable, regular file, within size, text detected or empty)
             return True, ""

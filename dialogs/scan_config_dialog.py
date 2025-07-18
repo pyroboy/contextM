@@ -21,10 +21,13 @@ class ScanConfigDialog(QDialog):
         self.folder_path = folder_path
         self.settings = initial_settings if initial_settings else {
             'include_subfolders': True,
-            'ignore_folders': set(DEFAULT_IGNORE_FOLDERS) # Use default if none provided
+            'ignore_folders': set(DEFAULT_IGNORE_FOLDERS),
+            'live_watcher': True
         }
-        # Ensure ignore_folders is a set, using default as fallback
-        self.settings['ignore_folders'] = set(self.settings.get('ignore_folders', DEFAULT_IGNORE_FOLDERS))
+        # Ensure essential keys exist with default fallbacks
+        self.settings.setdefault('ignore_folders', set(DEFAULT_IGNORE_FOLDERS))
+        self.settings.setdefault('live_watcher', True)
+        self.settings['ignore_folders'] = set(self.settings['ignore_folders'])
 
         self.layout = QVBoxLayout(self)
 
@@ -39,6 +42,10 @@ class ScanConfigDialog(QDialog):
         self.subfolder_checkbox = QCheckBox("Include files from sub-folders")
         self.subfolder_checkbox.setChecked(self.settings['include_subfolders'])
         form_layout.addRow(self.subfolder_checkbox)
+
+        self.live_watcher_checkbox = QCheckBox("Enable live file watcher")
+        self.live_watcher_checkbox.setChecked(self.settings['live_watcher'])
+        form_layout.addRow(self.live_watcher_checkbox)
 
         # Input for ignored folders
         ignore_folders_widget = QWidget()
@@ -72,6 +79,7 @@ class ScanConfigDialog(QDialog):
     def accept(self):
         """Updates the settings dictionary when OK is clicked."""
         self.settings['include_subfolders'] = self.subfolder_checkbox.isChecked()
+        self.settings['live_watcher'] = self.live_watcher_checkbox.isChecked()
         folders_text = self.ignore_folders_input.text().strip()
         if folders_text:
             # Create set from comma-separated input, ignoring empty strings and converting to lowercase

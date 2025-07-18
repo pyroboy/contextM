@@ -4,17 +4,21 @@ import pathlib
 import traceback
 
 # --- magic import ---
-try:
-    import magic
-    MAGIC_AVAILABLE = True
-except ImportError:
-    MAGIC_AVAILABLE = False
-    print("Warning: python-magic library not found or libmagic is missing.")
-    print("Install it ('pip install python-magic' or 'pip install python-magic-bin')")
-    print("and ensure libmagic C library is installed on your system.")
-    print("Falling back to content-based text file detection.")
+# HACK: Temporarily disable python-magic to avoid libmagic dependency issues
+MAGIC_AVAILABLE = False
+# try:
+#     import magic
+#     MAGIC_AVAILABLE = True
+# except ImportError:
+#     MAGIC_AVAILABLE = False
+#     print("Warning: python-magic library not found or libmagic is missing.")
+#     print("Install it ('pip install python-magic' or 'pip install python-magic-bin')")
+#     print("and ensure libmagic C library is installed on your system.")
+#     print("Falling back to content-based text file detection.")
 
 # --- tiktoken import ---
+_tokenizer = None
+
 try:
     import tiktoken
     TIKTOKEN_AVAILABLE = True
@@ -22,6 +26,13 @@ except ImportError:
     TIKTOKEN_AVAILABLE = False
     print("Warning: tiktoken library not found. Token counts will not be available.")
     print("Install it using: pip install tiktoken")
+
+def get_tokenizer():
+    """Returns a singleton tokenizer instance."""
+    global _tokenizer
+    if TIKTOKEN_AVAILABLE and _tokenizer is None:
+        _tokenizer = tiktoken.get_encoding("cl100k_base")
+    return _tokenizer
 
 # --- Configuration (needed for is_text_file and calculate_tokens) ---
 BINARY_CHECK_CHUNK_SIZE = 1024 # For is_text_file fallback check
