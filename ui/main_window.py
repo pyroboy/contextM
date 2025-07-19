@@ -3,7 +3,7 @@ import sys
 import pathlib
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFileDialog, QSplitter, QLabel, QMessageBox, QStyle, QDialog
+    QSplitter, QLabel, QStyle
 )
 from PySide6.QtCore import Qt, Slot, QTimer
 
@@ -20,20 +20,26 @@ from .widgets.file_changes_panel import FileChangesPanel
 from .widgets.selection_manager import SelectionManagerPanel
 
 # Dialogs
-from .dialogs.scan_config_dialog import ScanConfigDialog
-from .dialogs.workspace_dialog import WorkspaceManagerDialog
-from .dialogs.custom_instructions_dialog import CustomInstructionsDialog
-from .dialogs.edit_selection_group_dialog import EditSelectionGroupDialog
+from dialogs.custom_instructions_dialog import CustomInstructionsDialog
+
+# Controllers
+from .controllers.workspace_controller import WorkspaceController
+from .controllers.scan_controller import ScanController
+from .controllers.selection_controller import SelectionController
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, test_mode=False, testing_path=None):
+        print("MainWindow: Initializing...")
         super().__init__()
         self.setWindowTitle("Context-M")
         self.setGeometry(100, 100, 1200, 800)
 
+        self.test_mode = test_mode
+        self.testing_path = testing_path
+
         # Workspace and core components
-        self.workspaces = workspace_manager.load_workspaces()
-        self.custom_instructions = workspace_manager.load_custom_instructions()
+        self.workspaces = {}
+        self.custom_instructions = {}
         self.current_workspace_name = None
         self.current_folder_path = None
         self.current_scan_settings = None
@@ -44,14 +50,28 @@ class MainWindow(QMainWindow):
         self.selection_groups = {}
         self.active_selection_group = "Default"
 
+        # Controllers
+        self.workspace_ctl = WorkspaceController(self)
+        self.scan_ctl = ScanController(self)
+        self.sel_ctl = SelectionController(self)
+
         self._setup_ui()
         self._connect_signals()
 
-        # Initial workspace load
-        last_active = self.workspaces.get("last_active_workspace", "Default")
-        if last_active not in self.workspaces:
-            last_active = "Default"
-        self._switch_workspace(last_active, initial_load=True)
+        # In normal mode, load data and the last active workspace. In test mode, wait for the test to decide.
+        if not test_mode:
+            self.load_initial_data()
+            print(f"[DEBUG] In __init__, after load_initial_data: {self.workspaces}")
+            last_active = self.workspaces.get("last_active_workspace", "Default")
+            self.workspace_ctl.switch(last_active, initial_load=True)
+
+    def load_initial_data(self):
+        """Loads workspaces and other initial data. Can be called manually in test mode."""
+        self.workspaces = workspace_manager.load_workspaces(base_path=self.testing_path)
+        print(f"[DEBUG] Inside load_initial_data, after loading: {self.workspaces}")
+        if not self.workspaces or ("workspaces" not in self.workspaces or not self.workspaces["workspaces"]):
+            self.workspaces = {"workspaces": {"Default": {}}, "last_active_workspace": "Default"}
+        self.custom_instructions = workspace_manager.load_custom_instructions(base_path=self.testing_path)
 
     def _setup_ui(self):
         main_widget = QWidget()
@@ -81,417 +101,324 @@ class MainWindow(QMainWindow):
         # Main splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left side: Selection Manager and Tree Panel in a vertical splitter
+        # Left side
         left_container = QWidget()
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
-
         self.left_splitter = QSplitter(Qt.Orientation.Vertical)
         self.selection_manager_panel = SelectionManagerPanel(self)
         self.tree_panel = TreePanel(self)
-
+        self.tree_panel.item_checked_changed.connect(self._on_tree_selection_changed)
         self.left_splitter.addWidget(self.selection_manager_panel)
         self.left_splitter.addWidget(self.tree_panel)
         self.left_splitter.setStretchFactor(0, 0)
         self.left_splitter.setStretchFactor(1, 1)
-        self.left_splitter.setSizes([30, 770]) # Small initial size for the manager
-
         left_layout.addWidget(self.left_splitter)
         self.splitter.addWidget(left_container)
 
-        # Right side: Instructions and Aggregation
+        # Right side
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        self.splitter_right = QSplitter(Qt.Orientation.Vertical)
-
+        right_layout.setSpacing(0)
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
         self.instructions_panel = InstructionsPanel(self)
+        self.instructions_panel.populate_templates(self.custom_instructions)
         self.aggregation_view = AggregationView(self)
+        self.file_changes_panel = FileChangesPanel(self)
+        self.right_splitter.addWidget(self.instructions_panel)
+        self.right_splitter.addWidget(self.aggregation_view)
+        self.right_splitter.addWidget(self.file_changes_panel)
 
-        self.splitter_right.addWidget(self.instructions_panel)
-        self.splitter_right.addWidget(self.aggregation_view)
-        self.splitter_right.setStretchFactor(0, 0)
-        self.splitter_right.setStretchFactor(1, 1)
-        self.splitter_right.setSizes([150, 650])
+        # Configure splitter sizes - ensure file changes panel is visible
+        self.right_splitter.setStretchFactor(0, 0)  # Instructions panel
+        self.right_splitter.setStretchFactor(1, 1)  # Aggregation view
+        self.right_splitter.setStretchFactor(2, 0)  # File changes panel
+        self.right_splitter.setSizes([150, 500, 150])  # Ensure file changes panel has space
 
-        right_layout.addWidget(self.splitter_right)
+        right_layout.addWidget(self.right_splitter)
         self.splitter.addWidget(right_container)
 
-        # Create a new top-level splitter to add the third column
-        self.top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.top_splitter.addWidget(self.splitter)
-
-        # Rightmost panel: File Changes Log
-        self.file_changes_panel = FileChangesPanel(self)
-        self.top_splitter.addWidget(self.file_changes_panel)
-
-        # Set initial sizes for the three main panels
-        self.top_splitter.setSizes([850, 350]) # Main area and changes panel
-        self.splitter.setSizes([450, 400]) # Tree panel and right container
-
+        self.splitter.setSizes([300, 900])
         main_layout.addLayout(top_controls_layout)
-        main_layout.addWidget(self.top_splitter, 1)
-        self.statusBar().showMessage("Ready.")
+        main_layout.addWidget(self.splitter)
+
+        # Status bar watcher indicator
+        self._setup_watcher_indicator()
+        print("MainWindow: UI setup complete.")
 
     def _connect_signals(self):
-        # Top control signals
-        self.select_folder_button.clicked.connect(self.open_folder_dialog)
-        self.refresh_button.clicked.connect(self._refresh_current_folder)
-        self.manage_workspaces_button.clicked.connect(self._open_workspace_dialog)
+        # Top controls
+        self.manage_workspaces_button.clicked.connect(self.workspace_ctl.open_manager)
+        self.select_folder_button.clicked.connect(self.scan_ctl.select_folder)
+        self.scan_ctl.folder_selected.connect(self._update_path_display)
+        self.refresh_button.clicked.connect(self.scan_ctl.refresh)
 
-        # Scanner signals
+        # Core components
         self.scanner.scan_complete.connect(self._handle_scan_complete)
-        self.scanner.scan_error.connect(lambda p, e: print(f"Scan Error: {p} - {e}"))
+        self.workspace_ctl.workspace_changed.connect(self._on_workspace_switched)
 
-        # Panel signals
-        self.tree_panel.item_checked_changed.connect(self.update_aggregation_and_tokens)
-        self.tree_panel.file_tokens_changed.connect(self.file_changes_panel.add_change_entry)
-        self.tree_panel.root_path_changed.connect(self.file_changes_panel.set_root_path)
-        self.tree_panel.selection_changed.connect(self._on_tree_selection_changed)
-
-        self.instructions_panel.manage_templates_requested.connect(self._open_custom_instructions_dialog)
+        # Panels
+        self.instructions_panel.manage_button.clicked.connect(self._open_custom_instructions_dialog)
         self.instructions_panel.template_selected.connect(self._apply_instruction_template)
-        self.instructions_panel.instructions_text_changed.connect(self.aggregation_view.set_system_prompt)
+        self.instructions_panel.instructions_changed.connect(self._on_instructions_changed)
 
-        self.aggregation_view.token_count_changed.connect(self.instructions_panel.update_token_count)
-
-        # Selection Manager signals
-        self.selection_manager_panel.group_changed.connect(self._on_group_changed)
-        self.selection_manager_panel.save_requested.connect(self._on_save_group_requested)
-        self.selection_manager_panel.new_requested.connect(self._on_new_group_requested)
-        self.selection_manager_panel.edit_requested.connect(self._on_edit_group_requested)
-        self.selection_manager_panel.delete_requested.connect(self._on_delete_group_requested)
+        # Selection Manager Panel
+        self.selection_manager_panel.group_changed.connect(self.sel_ctl.on_group_changed)
+        self.selection_manager_panel.save_requested.connect(self.sel_ctl.save_group)
+        self.selection_manager_panel.new_requested.connect(self.sel_ctl.new_group)
+        self.selection_manager_panel.edit_requested.connect(self.sel_ctl.edit_group)
+        self.selection_manager_panel.delete_requested.connect(self.sel_ctl.delete_group)
 
     def closeEvent(self, event):
-        print("Closing application...")
-        if self.file_watcher:
-            self.file_watcher.stop()
+        """Handle the window close event by ensuring graceful shutdown of background threads."""
+        self._update_current_workspace_state()
         self._save_current_workspace_state()
-        super().closeEvent(event)
+        self._stop_file_watcher()
+        if self.scanner and self.scanner.is_running():
+            self.scanner.quit()
+            self.scanner.wait()
+        event.accept()
 
-    
-    # --- High-Level Orchestration Methods ---
+    def _update_current_workspace_state(self):
+        if not self.current_workspace_name or self.current_workspace_name not in self.workspaces.get('workspaces', {}):
+            return
+
+        current_ws = self.workspaces['workspaces'][self.current_workspace_name]
+        if not isinstance(current_ws, dict):
+            current_ws = {}
+            self.workspaces['workspaces'][self.current_workspace_name] = current_ws
+
+        current_ws["folder_path"] = self.current_folder_path
+        current_ws["scan_settings"] = self.current_scan_settings
+        current_ws["instructions"] = self.instructions_panel.get_text()
+        current_ws['active_selection_group'] = self.active_selection_group
+
+        if self.active_selection_group in self.selection_groups:
+            checked_paths = self.tree_panel.get_checked_paths(relative=True)
+            if isinstance(self.selection_groups[self.active_selection_group], dict):
+                self.selection_groups[self.active_selection_group]["checked_paths"] = checked_paths
+        current_ws['selection_groups'] = self.selection_groups
 
     def _save_current_workspace_state(self):
-        if not self.current_workspace_name:
-            return
-        current_ws = self.workspaces[self.current_workspace_name]
-        # This now saves the active group, not just the checked paths
-        current_ws["active_selection_group"] = self.active_selection_group
-        current_ws["instructions"] = self.instructions_panel.get_text()
-        workspace_manager.save_workspaces(self.workspaces)
+        if self.workspaces:
+            workspace_manager.save_workspaces(self.workspaces)
 
     def _switch_workspace(self, workspace_name, initial_load=False):
-        if not initial_load:
-            self._save_current_workspace_state()
+        print(f"[DEBUG][_switch_workspace] Initiating switch to workspace: '{workspace_name}'. Initial load: {initial_load}")
 
+        # This check is to create a brand new Default workspace if the JSON is empty or missing.
+        # It should only run if the workspace truly doesn't exist after loading.
+        if workspace_name == "Default" and not self.workspaces.get('workspaces', {}).get(workspace_name):
+            print("[DEBUG][_switch_workspace] 'Default' workspace not found. Creating a new one.")
+            if 'workspaces' not in self.workspaces:
+                print("[DEBUG][_switch_workspace] 'workspaces' key missing. Initializing.")
+                self.workspaces['workspaces'] = {}
+            self.workspaces['workspaces']['Default'] = {}
+            print(f"[DEBUG][_switch_workspace] New 'Default' workspace created. Current workspaces object: {self.workspaces}")
+
+        if not initial_load:
+            print(f"[DEBUG][_switch_workspace] Not initial load. Saving state for current workspace: '{self.current_workspace_name}'")
+            self._save_current_workspace_state()
+            print("[DEBUG][_switch_workspace] State saved.")
+        else:
+            print("[DEBUG][_switch_workspace] Initial load detected. Skipping state save.")
+
+        print(f"--- Switching to workspace: {workspace_name} ---")
+        self.current_workspace_name = workspace_name
+        self.workspace_label.setText(f"Workspace: {workspace_name}")
+        print(f"[DEBUG][_switch_workspace] Set current_workspace_name to: '{self.current_workspace_name}'")
+
+
+        print(f"[DEBUG][_switch_workspace] Attempting to retrieve data for workspace '{workspace_name}' from self.workspaces")
+        current_ws = self.workspaces.get('workspaces', {}).get(workspace_name, {})
+        print(f"[DEBUG][_switch_workspace] Loaded workspace data: {current_ws}")
+
+        self.current_folder_path = current_ws.get("folder_path")
+        self.current_scan_settings = current_ws.get("scan_settings")
+        print(f"[DEBUG][_switch_workspace] Extracted folder path: {self.current_folder_path}")
+        print(f"[DEBUG][_switch_workspace] Extracted scan settings: {self.current_scan_settings}")
+
+        self._update_path_display(self.current_folder_path if self.current_folder_path else "No folder selected.")
+        print(f"[DEBUG][_switch_workspace] Updated path display.")
+
+        self._on_workspace_switched(workspace_name)
+        print(f"[DEBUG][_switch_workspace] Executed _on_workspace_switched callback.")
+
+        if self.current_folder_path and self.current_scan_settings:
+            print(f"[DEBUG][_switch_workspace] Folder path and scan settings found. Starting scan for: {self.current_folder_path}")
+            active_group_data = self.selection_groups.get(self.active_selection_group, {})
+            checked_paths_to_restore = active_group_data.get("checked_paths", [])
+            self.scan_ctl.start(self.current_folder_path, self.current_scan_settings, checked_paths_to_restore)
+        else:
+            print("[DEBUG][_switch_workspace] Not starting scan. Folder path, scan settings, or both are missing.")
+            print(f"[DEBUG][_switch_workspace] -> Has folder path: {bool(self.current_folder_path)}")
+            print(f"[DEBUG][_switch_workspace] -> Has scan settings: {bool(self.current_scan_settings)}")
+
+        instructions_text = current_ws.get("instructions", "")
+        self.instructions_panel.set_text(instructions_text)
+        print(f"[DEBUG][_switch_workspace] Set instructions text. Length: {len(instructions_text)}")
+
+
+        print("[DEBUG][_switch_workspace] Loading selection groups from workspace data.")
+        self.selection_groups = selection_manager.load_groups(current_ws)
+        self.active_selection_group = current_ws.get("active_selection_group", "Default")
+        self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
+        print(f"[DEBUG][_switch_workspace] Loaded {len(self.selection_groups)} selection groups. Active group: '{self.active_selection_group}'")
+
+        print(f"[DEBUG][_switch_workspace] Workspace switch to '{workspace_name}' complete. ✅")
+    @Slot(str)
+    def _on_instructions_changed(self):
+        self._update_current_workspace_state()
+        self._save_current_workspace_state()
+
+    def _on_tree_selection_changed(self):
+        self.update_aggregation_and_tokens()
+        self._update_current_workspace_state()
+        # self._save_current_workspace_state()
+
+    @Slot(str)
+    def _on_workspace_switched(self, workspace_name):
+        self._update_path_display(self.current_folder_path or "No folder selected.")
+        self.refresh_button.setEnabled(bool(self.current_folder_path))
+
+        if self.current_folder_path:
+            self.tree_panel.show_loading(True)
+            self._start_file_watcher()
+        else:
+            self.tree_panel.clear_tree()
+            self.tree_panel.show_loading(False)
+            self.update_aggregation_and_tokens()
+            self._stop_file_watcher()
+
+    def _handle_scan_complete(self, results):
+        self.statusBar().showMessage("Scan complete.", 3000)
+        self.tree_panel.show_loading(False)
+        if results and results.get('items'):
+            self.tree_panel.populate_tree(results['items'], self.current_folder_path)
+            # After populating, apply the checked state from the active selection group
+            if self.active_selection_group in self.selection_groups:
+                group_data = self.selection_groups[self.active_selection_group]
+                if isinstance(group_data, dict):
+                    checked_paths = group_data.get("checked_paths", [])
+                    self.tree_panel.set_checked_paths(checked_paths, relative=True)
+        else:
+            self.sel_ctl.update_ui()
+        self._update_instructions_ui()
+
+    def _start_file_watcher(self):
+        self._stop_file_watcher()
+
+        if self.current_folder_path and self.current_scan_settings:
+            if self.current_scan_settings.get('live_watcher', True):
+                ignore_rules = self.current_scan_settings.get('ignore_folders', [])
+                
+                # Add workspace file to ignore patterns to prevent save loops
+                ws_file_path = workspace_manager._get_workspace_file_path()
+                if ws_file_path:
+                    ignore_rules.append(str(pathlib.Path(ws_file_path).name))
+
+                self.file_watcher = FileWatcher(self.current_folder_path, ignore_rules)
+                self.file_watcher.fs_event_batch.connect(self.file_changes_panel.update_with_fs_events)
+                self.file_watcher.start()
+                self.watcher_indicator.setVisible(True)
+                self.watcher_indicator.setToolTip("File watcher is active")
+            else:
+                self.watcher_indicator.setVisible(False)
+                self.watcher_indicator.setToolTip("File watcher is disabled for this workspace")
+
+    def _stop_file_watcher(self):
         if self.file_watcher:
             self.file_watcher.stop()
             self.file_watcher = None
+            self.watcher_indicator.setVisible(False)
 
-        if workspace_name not in self.workspaces:
-            workspace_name = "Default"
-
-        print(f"Switching to workspace: {workspace_name}")
-        self.current_workspace_name = workspace_name
-        self.workspace_label.setText(f"Workspace: {workspace_name}")
-
-        current_ws = self.workspaces[self.current_workspace_name]
-        self.current_folder_path = current_ws.get("folder_path")
-        self.current_scan_settings = current_ws.get("scan_settings")
-
-        # Load selection groups
-        self.selection_groups = selection_manager.load_groups(current_ws)
-        self.active_selection_group = current_ws.get("active_selection_group", "Default")
-        if self.active_selection_group not in self.selection_groups:
-            self.active_selection_group = "Default"
-        self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
-
-        self.instructions_panel.set_text(current_ws.get("instructions", ""))
-
-        if self.current_folder_path:
-            self.path_display_label.setText(f"Selected: {self.current_folder_path}")
-            self.refresh_button.setEnabled(True)
-            # Set pending paths from the active group before triggering a scan/refresh
-            active_group_data = self.selection_groups.get(self.active_selection_group, {})
-            pending_paths = set(active_group_data.get("checked_paths", []))
-            self.tree_panel.set_pending_restore_paths(pending_paths)
-            self._refresh_current_folder()
-        else:
-            self.tree_panel.clear_tree()
-            self.path_display_label.setText("No folder selected for this workspace.")
-            self.refresh_button.setEnabled(False)
-        
-        self.selection_manager_panel.set_dirty(False)
-        self.workspaces["last_active_workspace"] = workspace_name
-
-    @Slot()
     def update_aggregation_and_tokens(self):
-        """Updates the aggregation view based on the current tree selection."""
-        checked_paths = self.tree_panel.get_checked_paths(relative=True)
+        from .helpers.aggregation_helper import generate_file_tree_string
+        checked = self.tree_panel.get_checked_paths(relative=True)
+        tree_str = generate_file_tree_string(self.current_folder_path, checked)
+        content, tokens = self.tree_panel.get_aggregated_content()
+        final = f"{tree_str}\n\n---\n\n{content}"
+        self.aggregation_view.set_content(final, tokens)
+
+    def _setup_watcher_indicator(self):
+        """Adds a green dot indicator to the status bar for watcher status."""
+        from PySide6.QtWidgets import QLabel
+        from PySide6.QtGui import QPixmap, QPainter, QColor
         
-        # Generate the file tree string from checked paths
-        tree_string = self._generate_file_tree_string(checked_paths)
+        # Create the indicator label
+        self.watcher_indicator = QLabel()
+        self.watcher_indicator.setToolTip("File watcher status")
+        self.watcher_indicator.setFixedSize(16, 16)
         
-        # Get the actual aggregated content and token count
-        aggregated_content, total_tokens = self.tree_panel.get_aggregated_content()
+        # Create green dot pixmap
+        pixmap = QPixmap(12, 12)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setBrush(QColor(0, 200, 0))  # Green
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(0, 0, 12, 12)
+        painter.end()
         
-        # Combine the tree string with the aggregated content
-        final_content = f"{tree_string}\n\n---\n\n{aggregated_content}"
+        self.watcher_indicator.setPixmap(pixmap)
+        self.watcher_indicator.setVisible(False)  # Hidden by default
         
-        self.aggregation_view.set_content(final_content, total_tokens)
-        self.tree_panel.update_folder_token_display()
+        # Add to status bar (right side)
+        self.statusBar().addPermanentWidget(self.watcher_indicator)
 
-    def _generate_file_tree_string(self, relative_paths: set) -> str:
-        """Turns a set of relative paths into a pretty ASCII tree string."""
-        if not self.current_folder_path or not relative_paths:
-            return ""
-
-        # Create a hierarchical dictionary from the paths
-        path_tree = {}
-        # Add all parent directories to the tree structure implicitly
-        all_paths = set(relative_paths)
-        for path_str in relative_paths:
-            if path_str == '.': continue
-            parent = pathlib.Path(path_str).parent
-            while str(parent) != '.':
-                all_paths.add(str(parent))
-                parent = parent.parent
-
-        for path_str in sorted(list(all_paths)):
-            if path_str == '.': continue
-            parts = path_str.split(os.sep)
-            node = path_tree
-            for part in parts:
-                node = node.setdefault(part, {})
-
-        # Recursive function to build the string lines
-        def build_lines(subtree, path_prefix, tree_prefix=""):
-            lines = []
-            entries = sorted(subtree.keys())
-            for i, name in enumerate(entries):
-                is_last = (i == len(entries) - 1)
-                connector = "└── " if is_last else "├── "
-                
-                current_path_str = os.path.join(path_prefix, name)
-                current_path_obj = pathlib.Path(self.current_folder_path) / current_path_str
-                
-                # A path is a directory if it has children in our tree or is a dir on disk
-                is_dir = bool(subtree[name]) or current_path_obj.is_dir()
-                suffix = "/" if is_dir else ""
-                
-                # Only add lines for paths that were explicitly checked or are parents
-                if current_path_str in all_paths:
-                    lines.append(f"{tree_prefix}{connector}{name}{suffix}")
-
-                if subtree[name]:
-                    new_tree_prefix = tree_prefix + ("    " if is_last else "│   ")
-                    lines.extend(build_lines(subtree[name], current_path_str, new_tree_prefix))
-            return lines
-
-        # Start building the tree string
-        root_name = os.path.basename(self.current_folder_path)
-        output_lines = [f"{root_name}/"]
-        output_lines.extend(build_lines(path_tree, ""))
-
-        return "\n".join(output_lines)
-
-    # --- Action/Event Handler Methods ---
-
-    @Slot()
-    def open_folder_dialog(self):
-        new_folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
-        if not new_folder:
-            return
-
-        dialog = ScanConfigDialog(new_folder, self.current_scan_settings, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.current_folder_path = new_folder
-            self.current_scan_settings = dialog.get_settings()
-            
-            current_ws = self.workspaces[self.current_workspace_name]
-            current_ws["folder_path"] = self.current_folder_path
-            current_ws["scan_settings"] = self.current_scan_settings
-            
-            self.path_display_label.setText(f"Selected: {self.current_folder_path}")
-            self.refresh_button.setEnabled(True)
-            self._start_scan(self.current_folder_path, self.current_scan_settings)
-
-    @Slot()
-    def _refresh_current_folder(self):
-        if not self.current_folder_path or not self.current_scan_settings:
-            return
-        self.tree_panel.set_pending_restore_paths(self.tree_panel.get_checked_paths(return_set=True))
-        self._start_scan(self.current_folder_path, self.current_scan_settings)
-
-    def _start_scan(self, folder_path, settings):
-        self.tree_panel.clear_tree()
-        self.tree_panel.show_loading(True)
-        self.statusBar().showMessage(f"Scanning {folder_path}...")
-        self.scanner.start_scan(folder_path, settings)
-
-    @Slot(dict)
-    def _handle_scan_complete(self, results):
-        self.tree_panel.show_loading(False)
-        self.tree_panel.populate_tree(results['items'], self.current_folder_path)
-        self.update_aggregation_and_tokens()
-        self.statusBar().showMessage(f"Scan complete. Found {len(results['items'])} items.", 5000)
-        for path, error in results['errors']:
-            print(f"Scan Error: {path} - {error}")
-        self._start_file_watcher()
-
-    def _start_file_watcher(self):
-        if self.file_watcher and self.file_watcher.isRunning():
-            self.file_watcher.stop()
-
-        ws = self.workspaces[self.current_workspace_name]
-        if ws.get('scan_settings', {}).get('live_watcher', False) and self.current_folder_path:
-            self.file_watcher = FileWatcher(self.current_folder_path, self.current_scan_settings.get('ignore_folders', set()))
-            self.file_watcher.fs_event_batch.connect(self.tree_panel.handle_fs_events)
-            self.file_watcher.fs_event_batch.connect(self.file_changes_panel.update_with_fs_events)
-            self.file_watcher.start()
-            print(f"File watcher started for {self.current_folder_path}")
-
-    @Slot()
-    def _open_workspace_dialog(self):
-        self._save_current_workspace_state()
-        dialog = WorkspaceManagerDialog(self.workspaces, self.current_workspace_name, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected_ws = dialog.get_selected_workspace()
-            if selected_ws and selected_ws != self.current_workspace_name:
-                self._switch_workspace(selected_ws)
-
-    @Slot()
+    @Slot(str)
     def _open_custom_instructions_dialog(self):
-        dialog = CustomInstructionsDialog(self.custom_instructions, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.custom_instructions = dialog.get_instructions()
-            workspace_manager.save_custom_instructions(self.custom_instructions)
-            self.instructions_panel.populate_templates(self.custom_instructions)
+        if not self.current_workspace_name:
+            return
+        current_ws = self.workspaces.get('workspaces', {}).get(self.current_workspace_name, {})
+        # Ensure local instructions dict exists
+        current_ws.setdefault('local_custom_instructions', {})
+        
+        dialog = CustomInstructionsDialog(self.custom_instructions, current_ws, self)
+        dialog.instructions_changed.connect(self._handle_instructions_changed)
+        dialog.exec()
 
-    def closeEvent(self, event):
-        """Ensure background threads are stopped when the window closes."""
-        if self.file_watcher and self.file_watcher.isRunning():
-            self.file_watcher.stop()
-            self.file_watcher.wait()  # Wait for the thread to finish
-        super().closeEvent(event)
+    @Slot(dict, bool, dict)
+    def _handle_instructions_changed(self, global_instructions, use_local, local_instructions):
+        self.custom_instructions = global_instructions
+        if self.current_workspace_name:
+            current_ws = self.workspaces.get('workspaces', {}).get(self.current_workspace_name, {})
+            current_ws['use_local_templates'] = use_local
+            current_ws['local_custom_instructions'] = local_instructions
+            self._update_instructions_ui()
+            self._save_current_workspace_state()
+
+    def _update_instructions_ui(self):
+        if not self.current_workspace_name:
+            self.instructions_panel.populate_templates({})
+            return
+
+        current_ws = self.workspaces.get('workspaces', {}).get(self.current_workspace_name, {})
+        use_local = current_ws.get('use_local_templates', False)
+        
+        if use_local:
+            templates = current_ws.get('local_custom_instructions', {})
+        else:
+            templates = self.custom_instructions
+        self.instructions_panel.populate_templates(templates)
 
     @Slot(str)
     def _apply_instruction_template(self, template_name):
-        if template_name in self.custom_instructions:
-            instruction_text = self.custom_instructions[template_name]
-            self.instructions_panel.set_text(instruction_text)
-            # Manually emit the signal since programmatic text changes don't trigger it
-            self.instructions_panel.instructions_text_changed.emit(instruction_text)
-
-    # --- Selection Group Handlers ---
-
-    @Slot(str)
-    def _on_group_changed(self, group_name):
-        if not group_name or group_name not in self.selection_groups:
+        if not self.current_workspace_name or not template_name:
             return
 
-        self.active_selection_group = group_name
-        paths_to_check = set(self.selection_groups[group_name].get("checked_paths", []))
-        self.tree_panel.set_checked_paths(paths_to_check)
-        self.selection_manager_panel.set_dirty(False)
-        self._save_current_workspace_state() # Save active group change
-
-    @Slot()
-    def _on_save_group_requested(self):
-        current_group_name = self.selection_manager_panel.get_current_group_name()
-        if not current_group_name:
-            return
+        current_ws = self.workspaces.get('workspaces', {}).get(self.current_workspace_name, {})
+        use_local = current_ws.get('use_local_templates', False)
         
-        current_paths = self.tree_panel.get_checked_paths(return_set=True)
-        current_description = self.selection_groups.get(current_group_name, {}).get("description", "")
-        
-        current_ws = self.workspaces[self.current_workspace_name]
-        selection_manager.save_group(current_ws, current_group_name, current_description, current_paths)
-        workspace_manager.save_workspaces(self.workspaces)
-
-        # Reload groups to update internal state
-        self.selection_groups = selection_manager.load_groups(current_ws)
-        self.selection_manager_panel.set_dirty(False)
-        self.statusBar().showMessage(f"Group '{current_group_name}' saved.", 3000)
-
-    @Slot()
-    def _on_new_group_requested(self):
-        # For now, we'll just create a new group with a default name
-        # A more advanced implementation would use an inline rename widget
-        new_name = "New Group"
-        i = 1
-        while new_name in self.selection_groups:
-            new_name = f"New Group {i}"
-            i += 1
-
-        current_ws = self.workspaces[self.current_workspace_name]
-        selection_manager.save_group(current_ws, new_name, "", set()) # Create empty
-        workspace_manager.save_workspaces(self.workspaces)
-        self.selection_groups = selection_manager.load_groups(current_ws)
-        self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), new_name)
-
-    @Slot(str)
-    def _on_edit_group_requested(self, group_name):
-        if group_name not in self.selection_groups:
-            return
-        
-        group_data = self.selection_groups[group_name]
-        dialog = EditSelectionGroupDialog(group_name, group_data, self.selection_groups, self)
-        
-        # Connect the reset button
-        dialog.reset_button.clicked.connect(
-            lambda: dialog.set_current_selection(list(self.tree_panel.get_checked_paths(return_set=True)))
-        )
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            result = dialog.get_result()
-            new_name = result['name']
-            
-            current_ws = self.workspaces[self.current_workspace_name]
-
-            # If renamed, delete the old group
-            if new_name != group_name:
-                selection_manager.delete_group(current_ws, group_name)
-
-            selection_manager.save_group(current_ws, new_name, result['description'], set(result['checked_paths']))
-            workspace_manager.save_workspaces(self.workspaces)
-
-            self.selection_groups = selection_manager.load_groups(current_ws)
-            if self.active_selection_group == group_name:
-                self.active_selection_group = new_name
-            
-            self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
-            self.tree_panel.set_checked_paths(set(result['checked_paths']))
-
-    @Slot(str)
-    def _on_delete_group_requested(self, group_name):
-        if group_name not in self.selection_groups or group_name == "Default":
-            return
-        
-        current_ws = self.workspaces[self.current_workspace_name]
-        selection_manager.delete_group(current_ws, group_name)
-        workspace_manager.save_workspaces(self.workspaces)
-        self.selection_groups = selection_manager.load_groups(current_ws)
-
-        new_active_group = "Default" if self.active_selection_group == group_name else self.active_selection_group
-        self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), new_active_group)
-        if self.active_selection_group == group_name:
-            self._on_group_changed("Default")
-
-    @Slot()
-    def _on_tree_selection_changed(self):
-        # Compare current tree state with the saved state of the active group
-        active_group_name = self.selection_manager_panel.get_current_group_name()
-        if not active_group_name or active_group_name not in self.selection_groups:
-            return
-
-        saved_paths = set(self.selection_groups[active_group_name].get("checked_paths", []))
-        current_paths = self.tree_panel.get_checked_paths(return_set=True)
-
-        if saved_paths != current_paths:
-            self.selection_manager_panel.set_dirty(True)
+        if use_local:
+            templates = current_ws.get('local_custom_instructions', {})
         else:
-            self.selection_manager_panel.set_dirty(False)
+            templates = self.custom_instructions
 
+        content = templates.get(template_name, "")
+        self.instructions_panel.set_text(content)
+
+    @Slot(str)
+    def _update_path_display(self, folder_path):
+        self.path_display_label.setText(f"Current Project: {folder_path}")

@@ -52,10 +52,10 @@ class AggregationView(QWidget):
         try:
             pyperclip.copy(content)
             print("Content copied to clipboard.")
-            # Optionally, provide feedback to the user, e.g., in a status bar
+            return True
         except pyperclip.PyperclipException as e:
             print(f"Error copying to clipboard: {e}")
-            # Optionally, show a message box to the user
+            return False
 
     @Slot(str)
     def set_system_prompt(self, prompt):
@@ -63,11 +63,17 @@ class AggregationView(QWidget):
         self._system_prompt = prompt
         self._update_display()
 
-    def set_content(self, text, token_count):
-        """Updates the display with new text and token count."""
-        self._aggregated_text = text
-        self._aggregated_tokens = token_count
-        self._update_display()
+    # Public façade for tests
+    def get_content(self):
+        return self.aggregation_output.toPlainText()
+
+    def set_content(self, text, token_count=None):
+        self.aggregation_output.setPlainText(text)
+        self.token_info_label.setText(f"Total Tokens: {token_count or 0}")
+
+    def set_content(self, text, token_count=None):
+        self.aggregation_output.setPlainText(text)
+        self.token_info_label.setText(f"Total Tokens: {token_count or 0}")
 
     def _update_display(self):
         """Constructs the full output from prompt and content and updates the view."""
@@ -80,6 +86,4 @@ class AggregationView(QWidget):
         self.aggregation_output.setPlainText(full_text)
         self.token_info_label.setText(f"File Tokens: {self._aggregated_tokens:,}")
 
-    def get_content(self):
-        """Returns the current aggregated text."""
-        return self.aggregation_output.toPlainText()
+

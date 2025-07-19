@@ -1,4 +1,8 @@
 # --- File: helpers.py ---
+# --- Configuration used by the scanner (also patchable in tests) ---
+MAX_FILE_SIZE_KB = 200
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_KB * 1024
+SCAN_BATCH_SIZE = 100
 import os
 import pathlib
 import traceback
@@ -34,7 +38,7 @@ def get_tokenizer():
         _tokenizer = tiktoken.get_encoding("cl100k_base")
     return _tokenizer
 
-# --- Configuration (needed for is_text_file and calculate_tokens) ---
+
 BINARY_CHECK_CHUNK_SIZE = 1024 # For is_text_file fallback check
 TOKEN_ENCODING_NAME = "cl100k_base"
 

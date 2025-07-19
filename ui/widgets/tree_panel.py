@@ -59,14 +59,19 @@ class TreePanel(QWidget):
         self.tree_widget.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree_widget.setAlternatingRowColors(True)
 
+        self.token_count_label = QLabel("Total tokens: 0")
+        self.token_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+
         layout.addWidget(self.loading_label)
         layout.addWidget(self.tree_widget)
+        layout.addWidget(self.token_count_label)
 
     def _connect_signals(self):
         """Connects internal signals."""
         self.tree_widget.itemChanged.connect(self._handle_item_changed)
         self.tree_widget.itemSelectionChanged.connect(self.selection_changed)
         self.item_checked_changed.connect(self.update_folder_token_display)
+        self.item_checked_changed.connect(self._update_total_token_label)
 
     @Slot(QTreeWidgetItem, int)
     def _handle_item_changed(self, item, column):
@@ -76,39 +81,33 @@ class TreePanel(QWidget):
         self._is_programmatically_checking = True
         try:
             state = item.checkState(0)
-
-            # Part 1: Propagate state down to all children, ONLY if the item is a directory.
-            if item.data(0, self.IS_DIR_ROLE):
-                iterator = QTreeWidgetItemIterator(item, QTreeWidgetItemIterator.IteratorFlag(2))
-                while iterator.value():
-                    child = iterator.value()
-                    if child != item and child.checkState(0) != state:
+            # Propagate state down to children
+            def set_children_check_state(item, state):
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    if child.checkState(0) != state:
                         child.setCheckState(0, state)
-                    iterator += 1
+                    if child.childCount() > 0:
+                        set_children_check_state(child, state)
 
-            # Part 2: Propagate state up to all parents.
+            if item.data(0, self.IS_DIR_ROLE):
+                set_children_check_state(item, state)
+
+            # Propagate state up to parents
             parent = item.parent()
             while parent:
                 if state == Qt.CheckState.Checked:
-                    # If a child is checked, its parent must also be checked.
                     if parent.checkState(0) != Qt.CheckState.Checked:
                         parent.setCheckState(0, Qt.CheckState.Checked)
-                    else:
-                        # Parent is already checked, no need to go higher.
-                        break
-                else:  # Unchecked
-                    # If a child is unchecked, only uncheck parent if all its children are unchecked.
-                    all_children_unchecked = True
+                else: # Unchecked or PartiallyChecked
+                    all_unchecked = True
                     for i in range(parent.childCount()):
-                        if parent.child(i).checkState(0) == Qt.CheckState.Checked:
-                            all_children_unchecked = False
+                        if parent.child(i).checkState(0) != Qt.CheckState.Unchecked:
+                            all_unchecked = False
                             break
-                    if all_children_unchecked:
-                        if parent.checkState(0) == Qt.CheckState.Checked:
-                            parent.setCheckState(0, Qt.CheckState.Unchecked)
-                    else:
-                        # A sibling is checked, so parent must remain checked. Stop.
-                        break
+                    if all_unchecked:
+                        parent.setCheckState(0, Qt.CheckState.Unchecked)
+
                 parent = parent.parent()
         finally:
             self._is_programmatically_checking = False
@@ -128,6 +127,37 @@ class TreePanel(QWidget):
     def set_pending_restore_paths(self, paths):
         self._pending_tree_restore_paths = {os.path.normpath(p) for p in paths}
 
+    def set_checked_paths(self, paths, relative=False):
+        """Programmatically sets the check state of items based on a list of paths."""
+        self._is_programmatically_checking = True
+        try:
+            paths_to_check = set()
+            if relative and self.root_path:
+                for path in paths:
+                    # On Windows, os.path.join will use backslashes, but our stored paths use forward slashes.
+                    # So we construct the path manually and normalize.
+                    full_path = os.path.normpath(f"{self.root_path}/{path}").replace('\\', '/')
+                    paths_to_check.add(full_path)
+            else:
+                paths_to_check = set(paths)
+
+            iterator = QTreeWidgetItemIterator(self.tree_widget)
+            while iterator.value():
+                item = iterator.value()
+                item_path = item.data(0, self.PATH_DATA_ROLE)
+                if item_path in paths_to_check:
+                    if item.checkState(0) != Qt.CheckState.Checked:
+                        item.setCheckState(0, Qt.CheckState.Checked)
+                else:
+                    if item.checkState(0) != Qt.CheckState.Unchecked:
+                         item.setCheckState(0, Qt.CheckState.Unchecked)
+                iterator += 1
+        finally:
+            self._is_programmatically_checking = False
+        
+        # Trigger updates after all changes are made
+        self.item_checked_changed.emit()
+
     def get_checked_paths(self, return_set=False, relative=False):
         """Gets the paths of all checked items in the tree."""
         checked_paths = set()
@@ -137,7 +167,7 @@ class TreePanel(QWidget):
             if item.checkState(0) == Qt.CheckState.Checked:
                 path = item.data(0, self.PATH_DATA_ROLE)
                 if path:
-                    norm_path = os.path.normpath(path)
+                    norm_path = os.path.normpath(path).replace('\\', '/')
                     if relative and self.root_path:
                         # Ensure the path is within the root_path to avoid ValueError
                         if norm_path.startswith(self.root_path):
@@ -151,26 +181,55 @@ class TreePanel(QWidget):
         return checked_paths if return_set else sorted(list(checked_paths))
 
     def populate_tree(self, items, root_path):
-        self.root_path = os.path.normpath(root_path)
-        self.root_path_changed.emit(self.root_path)
-        self.tree_widget.setUpdatesEnabled(False)
         self.clear_tree()
+        self.root_path = os.path.normpath(root_path).replace('\\', '/')
+        self.tree_widget.setUpdatesEnabled(False)
 
-        for path_str, is_dir, is_valid, reason, token_count in items:
-            parent_path = os.path.dirname(os.path.normpath(path_str))
+        root_item = self._add_item_to_tree(
+            self.tree_widget.invisibleRootItem(), self.root_path, True, True, '', 0
+        )
+
+        # Step 1: Collect all directory paths that need to exist.
+        all_required_dirs = {self.root_path}
+        for path_str, is_dir, _, _, _ in items:
+            norm_path = os.path.normpath(path_str).replace('\\', '/')
+            path_to_ascend = norm_path if is_dir else os.path.dirname(norm_path)
+            p = pathlib.Path(path_to_ascend)
+            while p and str(p) != self.root_path and len(str(p)) >= len(self.root_path):
+                all_required_dirs.add(str(p).replace('\\', '/'))
+                p = p.parent
+
+        # Step 2: Create all directory items. Sorting ensures parents are created before children.
+        for dir_path in sorted(list(all_required_dirs)):
+            if dir_path == self.root_path or dir_path in self.tree_items:
+                continue
+            parent_path = os.path.dirname(dir_path)
             parent_item = self.tree_items.get(parent_path)
-            self._add_item_to_tree(parent_item, path_str, is_dir, is_valid, reason, token_count)
+            if parent_item:
+                self._add_item_to_tree(parent_item, dir_path, True, True, '', 0)
 
-        root = self.tree_widget.invisibleRootItem()
-        for i in range(root.childCount()):
-            self._calculate_and_store_total_tokens(root.child(i))
+        # Step 3: Create all file items.
+        for path_str, is_dir, is_valid, reason, token_count in items:
+            if not is_dir:
+                norm_path = os.path.normpath(path_str).replace('\\', '/')
+                parent_path = os.path.dirname(norm_path)
+                parent_item = self.tree_items.get(parent_path)
+                if parent_item:
+                    self._add_item_to_tree(parent_item, norm_path, False, is_valid, reason, token_count)
 
-        # --- NEW: make sure the folder labels are refreshed ---
+        # Final setup steps.
+        self._calculate_and_store_total_tokens(root_item)
         self.update_folder_token_display()
+
+        if self._pending_tree_restore_paths:
+            for path in self._pending_tree_restore_paths:
+                if path in self.tree_items:
+                    self.tree_items[path].setCheckState(0, Qt.CheckState.Checked)
+            self._pending_tree_restore_paths.clear()
 
         self.tree_widget.setUpdatesEnabled(True)
         self.tree_widget.expandToDepth(0)
-        self.tree_widget.resizeColumnToContents(1)
+        self.root_path_changed.emit(self.root_path)
 
     def get_aggregated_content(self):
         """Aggregates content from checked files using the specified format."""
@@ -239,31 +298,72 @@ class TreePanel(QWidget):
         try:
             for event in event_batch:
                 action = event['action']
-                src_path = os.path.normpath(event['src_path'])
+                src_path = os.path.normpath(event['src_path']).replace('\\', '/')
 
                 if action == 'created':
-                    if src_path in self.tree_items:
-                        continue
-                    parent_path = os.path.dirname(src_path)
-                    parent_item = self.tree_items.get(parent_path)
-                    if not parent_item and parent_path != self.root_path:
+                    if not os.path.exists(src_path) or src_path in self.tree_items:
                         continue
                     
-                    is_dir = os.path.isdir(src_path)
-                    token_count = 0
-                    if not is_dir:
-                        try:
-                            with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content = f.read()
-                            token_count = len(self.tokenizer.encode(content))
-                        except Exception as e:
-                            print(f"Could not read new file {src_path}: {e}")
-                    self._add_item_to_tree(parent_item, src_path, is_dir, True, '', token_count)
+                    parent_path = os.path.dirname(src_path).replace('\\', '/')
+                    parent_item = self.tree_items.get(parent_path)
+
+                    if not parent_item:
+                        # Create parent directories if they don't exist
+                        p = pathlib.Path(parent_path)
+                        dirs_to_create = []
+                        while str(p) != self.root_path and str(p).replace('\\', '/') not in self.tree_items:
+                            dirs_to_create.append(p)
+                            p = p.parent
+                        
+                        for dir_path_obj in reversed(dirs_to_create):
+                            dir_path = str(dir_path_obj).replace('\\', '/')
+                            parent_of_dir = os.path.dirname(dir_path)
+                            parent_item = self.tree_items.get(parent_of_dir)
+                            if parent_item:
+                                self._add_item_to_tree(parent_item, dir_path, True, True, '', 0)
+                    
+                    parent_item = self.tree_items.get(parent_path)
+                    if parent_item:
+                        is_dir = os.path.isdir(src_path)
+                        token_count = 0
+                        if not is_dir:
+                            try:
+                                with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read()
+                                token_count = len(self.tokenizer.encode(content))
+                            except Exception:
+                                pass # Ignore files that can't be read
+                        self._add_item_to_tree(parent_item, src_path, is_dir, True, '', token_count)
 
                 elif action == 'deleted':
-                    if src_path in self.tree_items:
-                        item = self.tree_items.pop(src_path)
-                        (item.parent() or self.tree_widget.invisibleRootItem()).removeChild(item)
+                    if src_path not in self.tree_items:
+                        continue
+                    item_to_remove = self.tree_items.pop(src_path)
+                    
+                    # Also remove all children from tree_items if it's a directory
+                    iterator = QTreeWidgetItemIterator(item_to_remove)
+                    while iterator.value():
+                        child = iterator.value()
+                        if child is not item_to_remove:
+                            child_path = child.data(0, self.PATH_DATA_ROLE)
+                            if child_path in self.tree_items:
+                                del self.tree_items[child_path]
+                        iterator += 1
+
+                    parent_item = item_to_remove.parent()
+                    (parent_item or self.tree_widget.invisibleRootItem()).removeChild(item_to_remove)
+
+                    # Recursively remove empty parent directories
+                    while parent_item and parent_item.childCount() == 0:
+                        parent_path = parent_item.data(0, self.PATH_DATA_ROLE)
+                        if parent_path == self.root_path:
+                            break
+                        
+                        grandparent_item = parent_item.parent()
+                        (grandparent_item or self.tree_widget.invisibleRootItem()).removeChild(parent_item)
+                        if parent_path in self.tree_items:
+                            del self.tree_items[parent_path]
+                        parent_item = grandparent_item
 
                 elif action == 'modified':
                     if src_path in self.tree_items and not self.tree_items[src_path].data(0, self.IS_DIR_ROLE):
@@ -282,7 +382,7 @@ class TreePanel(QWidget):
                             item.setText(1, "Error reading")
 
                 elif action == 'moved':
-                    dst_path = os.path.normpath(event['dst_path'])
+                    dst_path = os.path.normpath(event['dst_path']).replace('\\', '/')
                     if not dst_path or src_path not in self.tree_items:
                         continue
 
@@ -308,7 +408,7 @@ class TreePanel(QWidget):
     # --- Private Helper Methods ---
 
     def _add_item_to_tree(self, parent_item, path_str, is_dir, is_valid, reason, token_count):
-        norm_path = os.path.normpath(path_str)
+        norm_path = os.path.normpath(path_str).replace('\\', '/')
         item = QTreeWidgetItem(parent_item or self.tree_widget.invisibleRootItem())
         item.setText(0, os.path.basename(path_str))
         item.setData(0, self.PATH_DATA_ROLE, norm_path)
@@ -331,6 +431,18 @@ class TreePanel(QWidget):
         self.tree_items[norm_path] = item
         return item
 
+    def _calculate_selected_tokens_for_folder(self, folder_item):
+        """Recursively calculates the total tokens of checked items within a folder."""
+        selected_tokens = 0
+        iterator = QTreeWidgetItemIterator(folder_item)
+        while iterator.value():
+            item = iterator.value()
+            # Add tokens only for checked files
+            if item and not item.data(0, self.IS_DIR_ROLE) and item.checkState(0) == Qt.CheckState.Checked:
+                selected_tokens += item.data(0, self.TOKEN_COUNT_ROLE) or 0
+            iterator += 1
+        return selected_tokens
+
     def _calculate_and_store_total_tokens(self, item):
         """Recursively calculates and stores total tokens for a folder item."""
         # Base case: item is a file, its token count is already stored.
@@ -347,12 +459,18 @@ class TreePanel(QWidget):
 
 
 
-    def _calculate_selected_tokens_for_folder(self, folder_item):
-        selected_tokens = 0
-        for i in range(folder_item.childCount()):
-            child = folder_item.child(i)
-            if child.childCount() > 0:
-                selected_tokens += self._calculate_selected_tokens_for_folder(child)
-            elif child.checkState(0) == Qt.CheckState.Checked:
-                selected_tokens += child.data(0, self.TOKEN_COUNT_ROLE) or 0
-        return selected_tokens
+
+
+
+
+
+
+    def _update_total_token_label(self):
+        total_tokens = 0
+        iterator = QTreeWidgetItemIterator(self.tree_widget, QTreeWidgetItemIterator.IteratorFlag.Checked)
+        while iterator.value():
+            item = iterator.value()
+            if not item.data(0, self.IS_DIR_ROLE):
+                total_tokens += item.data(0, self.TOKEN_COUNT_ROLE) or 0
+            iterator += 1
+        self.token_count_label.setText(f"Total tokens: {total_tokens:,}")

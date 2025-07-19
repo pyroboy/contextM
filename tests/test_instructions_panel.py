@@ -55,6 +55,47 @@ class TestInstructionsPanel(unittest.TestCase):
 
     def test_template_selection_flow(self):
         """Test that selecting a template updates the instructions text and aggregation view."""
+
+    def test_save_new_template_flow(self):
+        """U-09: Test the full flow of saving a new template via the dialog."""
+        from dialogs.custom_instructions_dialog import CustomInstructionsDialog
+
+        # 1. Open the dialog with the main window's data
+        dialog = CustomInstructionsDialog(self.main_window.custom_instructions, {}, self.main_window)
+
+        # 2. Simulate user input to create a new template
+        new_template_name = "My New Template"
+        new_template_content = "This is the content for the new template."
+        dialog.new_name_input.setText(new_template_name)
+        dialog.add_button.click()
+        self.app.processEvents()
+
+        # Find the newly created editor widget
+        new_editor = None
+        for i in range(dialog.scroll_layout.count()):
+            widget = dialog.scroll_layout.itemAt(i).widget()
+            if widget.instruction_name == new_template_name:
+                new_editor = widget
+                break
+        
+        self.assertIsNotNone(new_editor, "New template editor widget should have been created.")
+
+        # 3. Update the content of the new template
+        new_editor.text_edit.setPlainText(new_template_content)
+        new_editor.update_button.click()
+        self.app.processEvents()
+
+        # 4. Close the dialog, which should trigger the update signal
+        dialog.accept()
+        self.app.processEvents()
+
+        # 5. Verify the main window's data was updated
+        self.assertIn(new_template_name, self.main_window.custom_instructions)
+        self.assertEqual(self.main_window.custom_instructions[new_template_name], new_template_content)
+
+        # 6. Verify the dropdown in the instructions panel was updated
+        index = self.instructions_panel.template_dropdown.findData(new_template_name)
+        self.assertGreaterEqual(index, 0, "New template should be in the dropdown.")
         # 1. Set up a dummy template in the main window's custom instructions
         template_name = "TestTemplate"
         template_content = "This is the content of the test template."

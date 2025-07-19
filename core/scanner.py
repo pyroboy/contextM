@@ -50,7 +50,20 @@ class Scanner(QObject):
         self.scan_complete.emit(self._results)
         self._scanner_thread = None # Allow thread to be garbage collected
 
+    def is_running(self):
+        """Checks if a scan is currently in progress."""
+        return self._scanner_thread and self._scanner_thread.isRunning()
+
+    def wait_for_completion(self, timeout=None):
+        """Blocks until the current scan is finished."""
+        if self.is_running():
+            return self._scanner_thread.wait(timeout) if timeout else self._scanner_thread.wait()
+
     def stop(self):
         """Public method to stop the scan if needed."""
         if self._scanner_thread and self._scanner_thread.isRunning():
             self._scanner_thread.stop()
+
+    def run(self):
+        """For unit-test convenience – delegates to internal thread."""
+        return self._scanner_thread.run()

@@ -65,69 +65,75 @@ class InstructionEditorWidget(QWidget):
 
 # --- Main Dialog ---
 class CustomInstructionsDialog(QDialog):
-    # Signal that instructions have changed and need saving/dropdown update
-    instructions_changed = Signal()
+    instructions_changed = Signal(dict, bool, dict) # global, use_local, local
 
-    def __init__(self, instructions_data, parent=None):
+    def __init__(self, global_instructions, workspace_data, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Custom Instructions Manager")
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(600, 500)
         self.setModal(True)
 
-        # Store a reference or copy? Let's work on a copy then update on close/save
-        self.instructions_data = instructions_data # Reference to main data dict
-        self._dirty = False # Track if changes were made
+        self.global_instructions = global_instructions
+        self.workspace_data = workspace_data
+        self._dirty = False
 
-        # --- Main Layout ---
         main_layout = QVBoxLayout(self)
 
-        # --- Scroll Area ---
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_widget = QWidget() # Content widget for scroll area
-        self.scroll_layout = QVBoxLayout(self.scroll_widget) # Layout for content widget
-        self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop) # Add items to top
-        self.scroll_area.setWidget(self.scroll_widget)
+        # --- Workspace-specific settings ---
+        self.use_local_checkbox = QCheckBox("Use workspace-specific instruction templates")
+        self.use_local_checkbox.setChecked(self.workspace_data.get('use_local_templates', False))
+        self.use_local_checkbox.toggled.connect(self._toggle_template_scope)
+        main_layout.addWidget(self.use_local_checkbox)
 
-        # --- Buttons Below Scroll Area ---
+        # --- Container for editors ---
+        self.editors_container = QWidget()
+        editors_layout = QVBoxLayout(self.editors_container)
+        editors_layout.setContentsMargins(0,0,0,0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_widget = QWidget()
+        self.scroll_layout = QVBoxLayout(self.scroll_widget)
+        self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.scroll_area.setWidget(self.scroll_widget)
+        editors_layout.addWidget(self.scroll_area)
+
+        # --- Add new instruction UI ---
         add_layout = QHBoxLayout()
         self.new_name_input = QLineEdit()
-        self.new_name_input.setPlaceholderText("Name for new instruction")
-        self.add_button = QPushButton("Add New Instruction")
+        self.new_name_input.setPlaceholderText("Enter new instruction name...")
+        self.add_button = QPushButton("Add New")
         self.add_button.clicked.connect(self.add_new_instruction_ui)
-
         add_layout.addWidget(self.new_name_input, 1)
         add_layout.addWidget(self.add_button)
+        editors_layout.addLayout(add_layout)
+        main_layout.addWidget(self.editors_container)
 
-        # --- Standard Button Box ---
+        # --- Dialog Buttons (Close) ---
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        self.button_box.rejected.connect(self.reject) # Close button triggers reject
-
-        # --- Assemble Main Layout ---
-        main_layout.addWidget(self.scroll_area, 1) # Scroll area takes most space
-        main_layout.addLayout(add_layout)
+        self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
 
-        # --- Populate Instructions ---
+        self._toggle_template_scope(self.use_local_checkbox.isChecked())
         self.populate_instructions()
+
+    def _get_active_instructions(self):
+        if self.use_local_checkbox.isChecked():
+            return self.workspace_data.setdefault('local_custom_instructions', {})
+        return self.global_instructions
 
     def populate_instructions(self):
         """Clears and refills the scroll area with instruction editors."""
-        # Clear existing widgets from layout first
         while self.scroll_layout.count():
             item = self.scroll_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
-
-        # Add Default first if present
-        if "Default" in self.instructions_data:
-            self.add_instruction_widget("Default", self.instructions_data["Default"])
-
-        # Add others sorted
-        other_names = sorted([name for name in self.instructions_data if name != "Default"])
-        for name in other_names:
-             self.add_instruction_widget(name, self.instructions_data[name])
+        
+        instructions = self._get_active_instructions()
+        sorted_names = sorted(instructions.keys())
+        for name in sorted_names:
+            text = instructions.get(name, "")
+            self.add_instruction_widget(name, text)
 
     def add_instruction_widget(self, name, text):
         """Adds an InstructionEditorWidget to the scroll layout."""
@@ -139,45 +145,43 @@ class CustomInstructionsDialog(QDialog):
     @Slot()
     def add_new_instruction_ui(self):
         """Adds a new instruction entry section."""
+        instructions = self._get_active_instructions()
         new_name = self.new_name_input.text().strip()
         if not new_name:
             QMessageBox.warning(self, "Input Error", "Please enter a name for the new instruction.")
             return
-        if new_name in self.instructions_data:
+        if new_name in instructions:
              QMessageBox.warning(self, "Input Error", f"An instruction named '{new_name}' already exists.")
              return
         if new_name == "Default":
              QMessageBox.warning(self, "Input Error", "Cannot use the reserved name 'Default'.")
              return
 
-        # Add to data immediately with empty text
-        self.instructions_data[new_name] = ""
-        self.add_instruction_widget(new_name, "") # Add UI widget
+        instructions[new_name] = ""
+        self.add_instruction_widget(new_name, "")
         self.new_name_input.clear()
         self._dirty = True
-        # Scroll to bottom? Optional.
         QTimer.singleShot(0, self.scroll_area.verticalScrollBar().setValue, self.scroll_area.verticalScrollBar().maximum())
-
 
     @Slot(str, str)
     def handle_instruction_update(self, name, new_text):
         """Update the data dictionary when an instruction's text is updated."""
-        if name in self.instructions_data:
-            if self.instructions_data[name] != new_text:
-                self.instructions_data[name] = new_text
+        instructions = self._get_active_instructions()
+        if name in instructions:
+            if instructions[name] != new_text:
+                instructions[name] = new_text
                 self._dirty = True
                 print(f"Instruction '{name}' updated in memory.")
-                # Maybe provide visual feedback? e.g., status bar message
             else:
                  print(f"Instruction '{name}' text unchanged.")
         else:
              print(f"Warning: Tried to update non-existent instruction '{name}'")
 
-
     @Slot(str)
     def handle_instruction_delete_request(self, name):
         """Handle delete request, confirm, then remove data and widget."""
-        if name == "Default": # Should be disabled, but double-check
+        instructions = self._get_active_instructions()
+        if name == "Default":
             QMessageBox.warning(self, "Delete Error", "Cannot delete the 'Default' instruction.")
             return
 
@@ -187,18 +191,16 @@ class CustomInstructionsDialog(QDialog):
                                      QMessageBox.StandardButton.No)
 
         if reply == QMessageBox.StandardButton.Yes:
-            if name in self.instructions_data:
-                del self.instructions_data[name]
+            if name in instructions:
+                del instructions[name]
                 self._dirty = True
                 print(f"Instruction '{name}' deleted from data.")
-                # Find and remove the corresponding widget
                 for i in range(self.scroll_layout.count()):
                     item = self.scroll_layout.itemAt(i)
                     widget = item.widget()
-                    # Check if it's our InstructionEditorWidget and matches name
                     if isinstance(widget, InstructionEditorWidget) and widget.instruction_name == name:
-                        widget.deleteLater() # Remove widget from layout and schedule deletion
-                        self.scroll_layout.removeItem(item) # Remove item from layout
+                        widget.deleteLater()
+                        self.scroll_layout.removeItem(item)
                         break
             else:
                  print(f"Warning: Tried to delete instruction '{name}' but it wasn't found in data.")
@@ -206,13 +208,30 @@ class CustomInstructionsDialog(QDialog):
     def reject(self):
         """Handle dialog close."""
         if self._dirty:
-             # Optional: Ask user if they want to save changes on close if dirty?
-             # Or just rely on MainWindow saving mechanism.
-             self.instructions_changed.emit() # Signal main window even on close if dirty
+             self.instructions_changed.emit(
+                 self.global_instructions,
+                 self.workspace_data.get('use_local_templates', False),
+                 self.workspace_data.get('local_custom_instructions', {})
+             )
         super().reject()
 
-    # Optionally override accept() if you want the Close button to save too
-    # def accept(self):
-    #     if self._dirty:
-    #         self.instructions_changed.emit()
-    #     super().accept()
+    @Slot(bool)
+    def _toggle_template_scope(self, use_local):
+        self.workspace_data['use_local_templates'] = use_local
+        self._dirty = True
+
+        # First, repopulate the list with the correct instruction set
+        self.populate_instructions()
+
+        # Then, set the enabled state of the controls based on the mode
+        is_editable = use_local
+        
+        # Enable/disable the container for adding new instructions
+        self.new_name_input.setEnabled(is_editable)
+        self.add_button.setEnabled(is_editable)
+
+        # Enable/disable the individual editor widgets already in the list
+        for i in range(self.scroll_layout.count()):
+            item = self.scroll_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setEnabled(is_editable)

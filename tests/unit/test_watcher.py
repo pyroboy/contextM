@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from core.watcher import FileWatcherThread
+from core.watcher import FileWatcher
 
 @pytest.fixture
 def temp_watched_dir(tmp_path):
@@ -16,71 +16,70 @@ def temp_watched_dir(tmp_path):
     watch_dir.mkdir()
     return watch_dir
 
-def test_watcher_filters_ignored_and_hidden_files(temp_watched_dir):
-    """Ensure the watcher ignores specified patterns and hidden files."""
-    ignore_patterns = ["*.log", "__pycache__/*"]
-    watcher = FileWatcherThread(str(temp_watched_dir), ignore_patterns)
+def test_watcher_filters_ignored_files(temp_watched_dir, qtbot):
+    """U-11: Ensure the watcher ignores specified glob patterns for files and directories."""
+    ignore_rules = ['*.log', 'build/*', '__pycache__']
+    watcher = FileWatcher(str(temp_watched_dir), ignore_rules)
     
-    # Simulate file events
-    (temp_watched_dir / "important.txt").touch()
-    (temp_watched_dir / "debug.log").touch()
-    (temp_watched_dir / ".hidden_file").touch()
-    (temp_watched_dir / "__pycache__").mkdir()
-    (temp_watched_dir / "__pycache__" / "cache.bin").touch()
+    # Create a directory to be ignored
+    build_dir = temp_watched_dir / "build"
+    build_dir.mkdir()
 
-    with patch.object(watcher.signals.files_changed, 'emit') as mock_emit:
-        # This is a simplified way to test the logic without a real backend
-        watcher.process_event(str(temp_watched_dir / "important.txt"))
-        watcher.process_event(str(temp_watched_dir / "debug.log"))
-        watcher.process_event(str(temp_watched_dir / ".hidden_file"))
-        watcher.process_event(str(temp_watched_dir / "__pycache__/cache.bin"))
-        time.sleep(0.3) # Wait for debounce
+    with qtbot.waitSignal(watcher.fs_event_batch, timeout=1000) as blocker:
+        watcher.start()
+        # Create files that should trigger events
+        (temp_watched_dir / "src").mkdir()
+        (temp_watched_dir / "src" / "main.py").touch()
+        
+        # Create files and folders that should be ignored
+        (temp_watched_dir / "app.log").touch()
+        (build_dir / "output.bin").touch()
+        (temp_watched_dir / "__pycache__").mkdir()
+        (temp_watched_dir / "__pycache__" / "cache.bin").touch()
 
-        mock_emit.assert_called_once()
-        emitted_files = mock_emit.call_args[0][0]
-        assert len(emitted_files) == 1
-        assert "important.txt" in emitted_files[0]
-
-def test_watcher_debounces_event_bursts(temp_watched_dir):
-    """Check that a rapid burst of events results in a single emission."""
-    watcher = FileWatcherThread(str(temp_watched_dir), [])
+    assert blocker.signal_triggered
+    emitted_batch = blocker.args[0]
     
-    with patch.object(watcher.signals.files_changed, 'emit') as mock_emit:
+    # Only the creation of 'main.py' should be reported (directories are ignored by default)
+    assert len(emitted_batch) == 1
+    assert emitted_batch[0]['action'] == 'created'
+    assert Path(emitted_batch[0]['src_path']).name == 'main.py'
+    
+    watcher.stop()
+
+def test_watcher_batches_events(temp_watched_dir, qtbot):
+    """Check that a rapid burst of events results in a single batched emission."""
+    watcher = FileWatcher(str(temp_watched_dir), [])
+    watcher.poll_timer.setInterval(100) # Speed up for test
+
+    with qtbot.waitSignal(watcher.fs_event_batch, timeout=1000) as blocker:
         watcher.start()
         (temp_watched_dir / "file1.txt").touch()
-        time.sleep(0.05)
         (temp_watched_dir / "file2.txt").touch()
-        time.sleep(0.05)
         (temp_watched_dir / "file3.txt").touch()
-        
-        time.sleep(0.3) # Wait for debounce timer to fire
-        
-        mock_emit.assert_called_once()
-        emitted_files = mock_emit.call_args[0][0]
-        assert len(emitted_files) == 3
-        watcher.stop()
-        watcher.wait()
 
-def test_watcher_emits_batch_within_200ms(temp_watched_dir):
-    """Ensure the batch is emitted shortly after the last event."""
-    watcher = FileWatcherThread(str(temp_watched_dir), [])
-    watcher.DEBOUNCE_DELAY = 0.1 # 100ms for test
+    assert blocker.signal_triggered
+    emitted_batch = blocker.args[0]
+    assert len(emitted_batch) == 3
+    
+    watcher.stop()
 
-    with patch.object(watcher.signals.files_changed, 'emit') as mock_emit:
+def test_watcher_emits_batch_with_polling_interval(temp_watched_dir, qtbot):
+    """Ensure the batch is emitted based on the polling interval."""
+    watcher = FileWatcher(str(temp_watched_dir), [])
+    watcher.poll_timer.setInterval(150) # 150ms for test
+
+    start_time = time.time()
+    with qtbot.waitSignal(watcher.fs_event_batch, timeout=1000) as blocker:
         watcher.start()
         (temp_watched_dir / "a.txt").touch()
-        start_time = time.time()
-        
-        # Wait for the debounce to complete
-        while not mock_emit.called:
-            time.sleep(0.01)
-            if time.time() - start_time > 0.5: # Timeout
-                pytest.fail("Watcher did not emit in time.")
 
-        end_time = time.time()
-        emission_delay = end_time - start_time
+    end_time = time.time()
+    emission_delay = end_time - start_time
 
-        assert emission_delay < 0.2 # Should be around 100ms + processing time
-        mock_emit.assert_called_once()
-        watcher.stop()
-        watcher.wait()
+    # The emission should happen after the timer interval.
+    # Allow for some processing overhead.
+    assert 0.15 <= emission_delay < 0.30
+    assert blocker.signal_triggered
+    
+    watcher.stop()

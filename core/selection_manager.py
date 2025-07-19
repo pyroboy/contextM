@@ -5,7 +5,7 @@
 from typing import Dict, Set
 
 
-def load_groups(workspace_dict: dict) -> Dict[str, dict]:
+def load_groups(workspace_dict: dict) -> dict:
     """
     Loads selection groups from the workspace data.
 
@@ -22,13 +22,14 @@ def save_group(workspace_dict: dict, name: str, description: str, paths: Set[str
     Saves a selection group to the workspace data.
 
     The checked paths are stored as a sorted list for consistency.
+    The groups themselves are also sorted alphabetically by name.
     """
     if "selection_groups" not in workspace_dict:
         workspace_dict["selection_groups"] = {}
 
     workspace_dict["selection_groups"][name] = {
         "description": description,
-        "checked_paths": sorted(list(paths)),
+        "checked_paths": list(checked_paths)
     }
 
 

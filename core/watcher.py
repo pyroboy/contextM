@@ -1,7 +1,9 @@
 import time
 import threading
+import os
 import queue
 from watchdog.observers.polling import PollingObserver as Observer
+import fnmatch
 from watchdog.events import FileSystemEventHandler, FileSystemMovedEvent
 from PySide6.QtCore import QObject, Signal, QTimer
 
@@ -23,7 +25,11 @@ class _EventHandler(FileSystemEventHandler):
         self.queue.put(event_data)
 
     def _is_ignored(self, path):
-        return any(rule in path for rule in self.ignore_rules)
+        """Check if a path matches any of the glob-style ignore rules."""
+        for pattern in self.ignore_rules:
+            if fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(os.path.basename(path), pattern):
+                return True
+        return False
 
 class FileWatcher(QObject):
     fs_event_batch = Signal(list)
@@ -31,7 +37,8 @@ class FileWatcher(QObject):
     def __init__(self, root_path, ignore_rules):
         super().__init__()
         self.root_path = root_path
-        self.ignore_rules = ignore_rules
+        # Ensure we get a set of patterns
+        self.ignore_rules = set(ignore_rules or [])
         self.event_queue = queue.Queue()
         self._stop_event = threading.Event()
         self._thread = None
@@ -39,7 +46,7 @@ class FileWatcher(QObject):
         # This timer will poll the queue from the main Qt thread
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._process_queue)
-        self.poll_timer.setInterval(250)
+        self.poll_timer.setInterval(150)
 
     def start(self):
         if self.isRunning():
@@ -68,7 +75,8 @@ class FileWatcher(QObject):
         observer = Observer()
         observer.schedule(event_handler, self.root_path, recursive=True)
         observer.start()
-        self._stop_event.wait() # Wait until stop is called
+        while not self._stop_event.is_set():
+            time.sleep(0.1) # Wait for a short period
         observer.stop()
         observer.join()
 

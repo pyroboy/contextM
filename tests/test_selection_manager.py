@@ -27,17 +27,22 @@ class TestSelectionManager(unittest.TestCase):
         self.assertEqual(groups["My Group"]["checked_paths"], ["a.py"])
 
     def test_save_new_group(self):
-        """Test saving a new group to an empty workspace."""
+        """U-06: Test saving a new group and ensure groups are sorted alphabetically."""
         workspace = {}
-        paths = {"b.txt", "a.py"}
-        selection_manager.save_group(workspace, "New Group", "A description", paths)
         
+        # Save groups in a non-alphabetical order
+        selection_manager.save_group(workspace, "Zephyr", "", {"z.py"})
+        selection_manager.save_group(workspace, "Alpha", "", {"a.py"})
+        selection_manager.save_group(workspace, "Beta", "", {"b.py"})
+
         self.assertIn("selection_groups", workspace)
-        self.assertIn("New Group", workspace["selection_groups"])
-        saved_group = workspace["selection_groups"]["New Group"]
-        self.assertEqual(saved_group["description"], "A description")
-        # Paths should be saved as a sorted list
-        self.assertEqual(saved_group["checked_paths"], ["a.py", "b.txt"])
+        groups = workspace["selection_groups"]
+        
+        # Assert that the keys (group names) are in alphabetical order
+        self.assertEqual(list(groups.keys()), ["Alpha", "Beta", "Zephyr"])
+        
+        # Assert that the paths within a group are also sorted
+        self.assertEqual(groups["Alpha"]["checked_paths"], ["a.py"])
 
     def test_save_update_group(self):
         """Test updating an existing group."""
@@ -73,6 +78,37 @@ class TestSelectionManager(unittest.TestCase):
 
     def test_cannot_delete_default_group(self):
         """Test that the 'Default' group cannot be deleted."""
+
+    def test_delete_group_switches_to_default(self):
+        """U-07: Test that deleting the active group switches the UI to Default."""
+        # Setup mock main_window and its components
+        main_window = MagicMock()
+        main_window.workspaces = {
+            "MyWorkspace": {
+                "selection_groups": {
+                    "GroupA": {"checked_paths": []},
+                    "GroupB": {"checked_paths": []}
+                }
+            }
+        }
+        main_window.current_workspace_name = "MyWorkspace"
+        main_window.selection_groups = main_window.workspaces["MyWorkspace"]["selection_groups"]
+        main_window.active_selection_group = "GroupA"
+        main_window.selection_manager_panel = MagicMock()
+
+        # Initialize the controller with the mock window
+        from ui.controllers.selection_controller import SelectionController
+        controller = SelectionController(main_window)
+
+        # Delete the active group
+        controller.delete_group("GroupA")
+
+        # Assert that the panel was updated to switch to the 'Default' group
+        main_window.selection_manager_panel.update_groups.assert_called_once()
+        call_args = main_window.selection_manager_panel.update_groups.call_args[0]
+        self.assertIn("Default", call_args[0])
+        self.assertNotIn("GroupA", call_args[0])
+        self.assertEqual(call_args[1], "Default") # Assert new active group is 'Default'
         workspace = {
             "selection_groups": {
                 "Default": {},

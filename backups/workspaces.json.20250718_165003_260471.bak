@@ -1,0 +1,19 @@
+{
+    "schema_version": 1,
+    "workspaces": {
+        "Default": {
+            "folder_path": null,
+            "scan_settings": null,
+            "instructions": "sadas",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": []
+                }
+            }
+        }
+    },
+    "last_active_workspace": "Default",
+    "checksum": "393306ada8f451fcde8710f06e0a64f9e7c823ce56d03467248f5ca6fe896eff"
+}

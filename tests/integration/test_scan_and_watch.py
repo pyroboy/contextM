@@ -18,50 +18,79 @@ def app(qapp):
 
 @pytest.fixture
 def main_window(qtbot):
-    window = MainWindow()
+    # Use test_mode to prevent auto-loading and scanning on startup
+    window = MainWindow(test_mode=True)
     window.show()
     qtbot.addWidget(window)
-    # Allow time for the window to initialize
     qtbot.wait(100)
-    return window
+    
+    try:
+        yield window
+    finally:
+        # Explicitly stop threads and close window for stable tests
+        if window.file_watcher and window.file_watcher.isRunning():
+            window.file_watcher.stop()
+        if window.scanner and window.scanner.is_running():
+            window.scanner.stop()
+            window.scanner.wait_for_completion(1000)
+        window.close()
+        qtbot.wait(50)
 
 @pytest.fixture
 def temp_repo_for_watching(tmp_path):
     repo_path = tmp_path / "large_repo"
-    file_specs = [ (f"file_{i}.txt", f"content {i}") for i in range(1000) ]
+    file_specs = {f"file_{i}.txt": f"content {i}" for i in range(1000)}
     create_test_repo(repo_path, file_specs)
     return repo_path
 
 def test_scan_and_watch_consistency(main_window, temp_repo_for_watching, qtbot):
-    """
-    Test creating 1000 files, scanning, then deleting 500 
-    and asserting the tree view stays consistent via the watcher.
-    """
-    # 1. Simulate selecting the folder to trigger the initial scan
-    with qtbot.waitSignal(main_window.tree_panel.scan_completed, timeout=5000):
-        main_window.workspace_manager.update_workspace_folder(str(temp_repo_for_watching))
+    """I-01, I-02, E2E-05, I-13: Test large scan, hidden files, renames, and watcher updates."""
+    repo_path = temp_repo_for_watching
+    # I-02: Add hidden files and folders to be ignored
+    (repo_path / ".hidden_file").write_text("secret")
+    (repo_path / ".hidden_dir").mkdir()
+    (repo_path / ".hidden_dir" / "another.txt").write_text("secret")
+
+    # --- I-01 & I-13: Initial Scan Performance & UI Responsiveness ---
+    start_time = time.monotonic()
     
-    # Give the UI a moment to settle
-    qtbot.wait(200)
+    # Measure UI freeze time during scan signal
+    with qtbot.waitSignal(main_window.scan_ctl.scan_finished, timeout=10000) as blocker:
+        # qtbot.wait functions block the event loop, so we can use them to check for UI freezes.
+        # We expect the UI to remain responsive (not freeze for more than 200ms) during the scan.
+        with qtbot.wait_while(lambda: main_window.tree_panel.loading_label.isVisible(), timeout=10000):
+            main_window.scan_ctl.select_folder(str(repo_path))
 
-    # 2. Assert that all 1000 files are initially in the tree
-    assert len(main_window.tree_panel.path_to_item_map) == 1000
-    root_item = main_window.tree_panel.tree.topLevelItem(0)
-    assert root_item.childCount() == 1000
+    scan_duration = time.monotonic() - start_time
+    print(f"Scan of 1000 files took: {scan_duration:.2f}s")
+    assert scan_duration < 3.0, "I-01: Scan should be faster than 3 seconds."
 
-    # 3. Delete 500 files externally
-    files_to_delete = list(main_window.tree_panel.path_to_item_map.keys())[:500]
-    for file_path in files_to_delete:
-        os.remove(file_path)
+    # Assert tree is populated correctly, ignoring hidden files
+    # The repo has 1000 text files + the root folder itself in the map.
+    assert len(main_window.tree_panel.path_to_item_map) == 1001
+    assert not any(path.name.startswith('.') for path in main_window.tree_panel.path_to_item_map.keys())
 
-    # 4. Wait for the watcher to detect changes and update the tree
-    # The watcher should emit a 'files_changed' signal which the main window
-    # connects to its 'on_files_changed' slot.
-    # We wait for the tree's update signal as the final confirmation.
+    # --- E2E-05: File Rename and Check State Preservation ---
+    old_file_path = repo_path / "file_10.txt"
+    new_file_path = repo_path / "file_10_renamed.txt"
+    old_file_path_str = str(old_file_path)
+    new_file_path_str = str(new_file_path)
+
+    # 1. Check the item to be renamed
+    item_to_rename = main_window.tree_panel.path_to_item_map[old_file_path_str]
+    item_to_rename.setCheckState(0, Qt.CheckState.Checked)
+    assert old_file_path_str in main_window.tree_panel.get_checked_paths(relative=False)
+
+    # 2. Rename the file externally
+    os.rename(old_file_path, new_file_path)
+
+    # 3. Wait for the watcher to update the tree
     with qtbot.waitSignal(main_window.tree_panel.tree_updated, timeout=5000):
-        # The watcher runs in a background thread, so we just need to wait.
-        pass
+        pass # Watcher runs in background, just wait for signal
 
-    # 5. Assert that the tree now contains only 500 files
-    assert len(main_window.tree_panel.path_to_item_map) == 500
-    assert root_item.childCount() == 500
+    # 4. Assert the old path is gone, the new one exists, and it's still checked
+    assert old_file_path_str not in main_window.tree_panel.path_to_item_map
+    assert new_file_path_str in main_window.tree_panel.path_to_item_map
+    assert new_file_path_str in main_window.tree_panel.get_checked_paths(relative=False)
+    new_item = main_window.tree_panel.path_to_item_map[new_file_path_str]
+    assert new_item.checkState(0) == Qt.CheckState.Checked

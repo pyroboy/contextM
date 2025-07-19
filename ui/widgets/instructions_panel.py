@@ -8,7 +8,7 @@ class InstructionsPanel(QWidget):
     """A widget for managing and displaying instruction templates."""
     
     # Signals
-    instructions_text_changed = Signal(str)
+    instructions_changed = Signal(str)
     template_selected = Signal(str) # Emits the name of the template
     manage_templates_requested = Signal()
 
@@ -53,7 +53,7 @@ class InstructionsPanel(QWidget):
     @Slot()
     def _on_text_changed(self):
         """Emits the current text when it changes."""
-        self.instructions_text_changed.emit(self.instructions_input.toPlainText())
+        self.instructions_changed.emit(self.instructions_input.toPlainText())
 
     @Slot(int)
     def _on_template_selected(self, index):
@@ -86,3 +86,15 @@ class InstructionsPanel(QWidget):
             self.template_dropdown.addItem(name, name)
             
         self.template_dropdown.blockSignals(False)
+
+    def get_instructions(self):
+        return self.instructions_input.toPlainText()
+
+    def set_instructions(self, text):
+        self.instructions_input.setPlainText(text)
+
+    def set_instructions(self, text):
+        self.instructions_input.setPlainText(text)
+
+    def update_templates(self, templates_dict):
+        self.populate_templates(templates_dict)

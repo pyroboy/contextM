@@ -6,12 +6,7 @@ from PySide6.QtCore import QThread, Signal
 
 # --- Import helpers ---
 # from .helpers import is_text_file, calculate_tokens
-from .helpers import calculate_tokens # HACK: Temporarily disable is_text_file
-
-# --- Configuration (needed for the scanner) ---
-MAX_FILE_SIZE_KB = 200 # Example, should ideally match main config
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_KB * 1024
-SCAN_BATCH_SIZE = 100
+from .helpers import calculate_tokens, MAX_FILE_SIZE_KB, MAX_FILE_SIZE_BYTES, SCAN_BATCH_SIZE # HACK: Temporarily disable is_text_file
 
 # --- Worker Thread ---
 class DirectoryScanner(QThread):
