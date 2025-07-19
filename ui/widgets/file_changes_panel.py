@@ -51,14 +51,25 @@ class FileChangesPanel(QWidget):
                 self._add_entry(src_path, "removed")
             elif action == 'moved':
                 dst_path = event['dst_path']
-                src_rel_path = os.path.relpath(src_path, self.root_path) if self.root_path else src_path
-                self._add_entry(dst_path, f"renamed from {src_rel_path}")
+                display_src_path = self._get_display_path(src_path)
+                self._add_entry(dst_path, f"renamed from {display_src_path}")
 
     def _add_entry(self, file_path, change_info):
         if file_path not in self.file_changes:
             self.file_changes[file_path] = deque(maxlen=5)
         self.file_changes[file_path].appendleft(change_info)
         self._update_display()
+
+    def _get_display_path(self, path):
+        """
+        Generates a display path that does not include the root path.
+        """
+        if self.root_path:
+            try:
+                return os.path.relpath(path, self.root_path)
+            except ValueError:
+                pass  # Fall through
+        return os.path.basename(path)
 
     def _update_display(self):
         """Clears and repopulates the list widget with consolidated changes."""
@@ -68,7 +79,8 @@ class FileChangesPanel(QWidget):
             if not changes:
                 continue
 
-            display_path = os.path.relpath(file_path, self.root_path) if self.root_path else file_path
+            display_path = self._get_display_path(file_path)
+
             
             change_parts = []
             for c in changes:

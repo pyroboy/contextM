@@ -2,11 +2,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QLabel, QHeaderView, 
     QTreeWidgetItem, QTreeWidgetItemIterator, QStyle
 )
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QIcon
 
 import os
 import pathlib
+import time
 
 # Assuming these helpers will be available from the core module
 from core.helpers import TIKTOKEN_AVAILABLE, get_tokenizer
@@ -33,6 +34,18 @@ class TreePanel(QWidget):
         self.tokenizer = get_tokenizer()
         self._pending_tree_restore_paths = set()
         self.root_path = None
+        
+        # Batching variables for non-blocking tree population
+        # Initialize batching variables with dynamic sizing
+        self._base_batch_size = 25  # Base batch size for small projects
+        self._batch_timer = QTimer()
+        self._batch_timer.setSingleShot(True)
+        self._batch_timer.timeout.connect(self._process_next_batch)
+        self._batch_timer.setSingleShot(True)
+        
+        # Timing variables for performance tracking
+        self._tree_start_time = None
+        self._phase_start_time = None
 
         # Icons
         self.folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
@@ -51,6 +64,11 @@ class TreePanel(QWidget):
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_label.setVisible(False)
 
+        # Progress label for optimistic loading
+        self.progress_label = QLabel("Loading tokens...")
+        self.progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.progress_label.setVisible(False)
+
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderLabels(["Name", "Status / Tokens"])
         self.tree_widget.setColumnCount(2)
@@ -63,6 +81,7 @@ class TreePanel(QWidget):
         self.token_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         layout.addWidget(self.loading_label)
+        layout.addWidget(self.progress_label)
         layout.addWidget(self.tree_widget)
         layout.addWidget(self.token_count_label)
 
@@ -181,25 +200,229 @@ class TreePanel(QWidget):
         return checked_paths if return_set else sorted(list(checked_paths))
 
     def populate_tree(self, items, root_path):
+        """Populate tree with batched processing to prevent UI blocking."""
+        self._tree_start_time = time.time()
+        print(f"[TREE_PANEL] 🌳 Starting batched tree population with {len(items)} items (T+0.00ms)")
+        
+        self.clear_tree()
+        clear_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🧽 Tree cleared (T+{clear_time:.2f}ms)")
+        
+        self.root_path = os.path.normpath(root_path).replace('\\', '/')
+        
+        # Store items for batched processing and pre-calculate token data
+        self._pending_items = items.copy()
+        self._batch_index = 0
+        self._batch_size = self._base_batch_size  # Process 25 items per batch
+        
+        # Pre-calculate and store token data from BG_scanner results
+        self._token_data = {}  # path -> token_count mapping
+        self._folder_tokens = {}  # folder_path -> total_tokens mapping
+        
+        # Extract token data from BG_scanner results
+        for path_str, is_dir, rel_path, file_size, tokens in items:
+            norm_path = os.path.normpath(path_str).replace('\\', '/')
+            if not is_dir and tokens > 0:
+                self._token_data[norm_path] = tokens
+                # Also accumulate folder tokens
+                folder_path = os.path.dirname(norm_path)
+                while folder_path and folder_path != self.root_path:
+                    self._folder_tokens[folder_path] = self._folder_tokens.get(folder_path, 0) + tokens
+                    folder_path = os.path.dirname(folder_path)
+                # Add to root folder
+                self._folder_tokens[self.root_path] = self._folder_tokens.get(self.root_path, 0) + tokens
+        
+        token_calc_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🧠 Token data pre-calculated from BG_scanner: {len(self._token_data)} files, {sum(self._token_data.values())} total tokens (T+{token_calc_time:.2f}ms)")
+        
+        # Disable updates during batching
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        # Create root item first
+        root_item = self._add_item_to_tree(
+            self.tree_widget.invisibleRootItem(), self.root_path, True, True, '', 0
+        )
+        root_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🌳 Root item created (T+{root_time:.2f}ms)")
+        
+        # Pre-calculate all required directories for batched processing
+        calc_start_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 📁 Pre-calculating directory structure... (T+{calc_start_time:.2f}ms)")
+        self._all_required_dirs = {self.root_path}
+        for path_str, is_dir, _, _, _ in self._pending_items:
+            norm_path = os.path.normpath(path_str).replace('\\', '/')
+            path_to_ascend = norm_path if is_dir else os.path.dirname(norm_path)
+            p = pathlib.Path(path_to_ascend)
+            while p and str(p) != self.root_path and len(str(p)) >= len(self.root_path):
+                self._all_required_dirs.add(str(p).replace('\\', '/'))
+                p = p.parent
+        
+        # Convert to sorted list for batched processing
+        self._sorted_dirs = sorted(list(self._all_required_dirs))
+        self._dir_index = 0
+        
+        calc_complete_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] ✅ Directory calculation complete: {len(self._sorted_dirs)} directories, {len(self._pending_items)} items (T+{calc_complete_time:.2f}ms)")
+        
+        # Calculate optimal batch size and timer interval based on project size
+        total_items = len(self._pending_items)
+        if total_items <= 100:
+            self._batch_size = 25
+            self._timer_interval = 1  # 1ms for small projects
+        elif total_items <= 300:
+            self._batch_size = 50
+            self._timer_interval = 0  # No delay for medium projects
+        else:
+            self._batch_size = 100
+            self._timer_interval = 0  # No delay for large projects
+        
+        # Start batched processing with optimized timer
+        batch_start_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🚀 Starting batched processing: {self._batch_size} items/batch, {self._timer_interval}ms interval (T+{batch_start_time:.2f}ms)")
+        self._phase_start_time = time.time()  # Track phase timing
+        self._batch_timer.start(self._timer_interval)
+    
+    def _process_next_batch(self):
+        """Process next batch of items to keep UI responsive."""
+        current_time = (time.time() - self._tree_start_time) * 1000
+        
+        # Phase 1: Create directories in batches
+        if self._dir_index < len(self._sorted_dirs):
+            batch_end = min(self._dir_index + self._batch_size, len(self._sorted_dirs))
+            
+            for i in range(self._dir_index, batch_end):
+                dir_path = self._sorted_dirs[i]
+                if dir_path not in self.tree_items:
+                    parent_path = os.path.dirname(dir_path)
+                    parent_item = self.tree_items.get(parent_path, self.tree_widget.invisibleRootItem())
+                    self._add_item_to_tree(parent_item, dir_path, True, True, '', 0)
+            
+            self._dir_index = batch_end
+            
+            # Progress update for directories (only every 25 items to reduce console spam)
+            if self._dir_index % 25 == 0 or self._dir_index == len(self._sorted_dirs):
+                dir_progress = (self._dir_index / len(self._sorted_dirs)) * 50  # Directories are 50% of total progress
+                dir_progress_time = (time.time() - self._tree_start_time) * 1000
+                print(f"[TREE_PANEL] 📁 Directory progress: {self._dir_index}/{len(self._sorted_dirs)} ({dir_progress:.1f}%) (T+{dir_progress_time:.2f}ms)")
+            
+            # Continue with next batch
+            self._batch_timer.start(self._timer_interval)
+            return
+        
+        # Phase 2: Create file items in batches
+        if self._batch_index < len(self._pending_items):
+            # Log phase transition on first file batch
+            if self._batch_index == 0:
+                phase_transition_time = (time.time() - self._tree_start_time) * 1000
+                print(f"[TREE_PANEL] 🔄 Transitioning to file processing phase (T+{phase_transition_time:.2f}ms)")
+            batch_end = min(self._batch_index + self._batch_size, len(self._pending_items))
+            
+            for i in range(self._batch_index, batch_end):
+                path_str, is_dir, is_valid, reason, token_count = self._pending_items[i]
+                
+                if not is_dir:  # Only process files in this phase
+                    norm_path = os.path.normpath(path_str).replace('\\', '/')
+                    parent_path = os.path.dirname(norm_path)
+                    parent_item = self.tree_items.get(parent_path, self.tree_widget.invisibleRootItem())
+                    self._add_item_to_tree(parent_item, norm_path, False, is_valid, reason, token_count)
+            
+            self._batch_index = batch_end
+            
+            # Progress update for files (only every 50 items to reduce console spam for large projects)
+            progress_interval = 50 if len(self._pending_items) > 200 else 25
+            if self._batch_index % progress_interval == 0 or self._batch_index == len(self._pending_items):
+                file_progress = 50 + (self._batch_index / len(self._pending_items)) * 50  # Files are the remaining 50%
+                file_progress_time = (time.time() - self._tree_start_time) * 1000
+                print(f"[TREE_PANEL] 📄 File progress: {self._batch_index}/{len(self._pending_items)} ({file_progress:.1f}%) (T+{file_progress_time:.2f}ms)")
+            
+            # Continue with next batch
+            self._batch_timer.start(self._timer_interval)
+            return
+        
+        # Phase 3: Finalization
+        finalize_start_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] ⚙️ Finalizing tree... (T+{finalize_start_time:.2f}ms)")
+        self._finalize_tree_population()
+    
+    def _finalize_tree_population(self):
+        """Complete tree population with final setup steps."""
+        # Apply pre-calculated token data directly to tree items (no recursive calculation needed!)
+        token_start_time = (time.time() - self._tree_start_time) * 1000
+        
+        # Set file token counts from BG_scanner data
+        for file_path, token_count in self._token_data.items():
+            if file_path in self.tree_items:
+                self.tree_items[file_path].setData(0, self.TOKEN_COUNT_ROLE, token_count)
+        
+        # Set folder token counts from pre-calculated totals
+        for folder_path, total_tokens in self._folder_tokens.items():
+            if folder_path in self.tree_items:
+                self.tree_items[folder_path].setData(0, self.TOKEN_COUNT_ROLE, total_tokens)
+        
+        token_complete_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🧠 Token data applied from BG_scanner (T+{token_start_time:.2f}ms -> T+{token_complete_time:.2f}ms)")
+        
+        display_start_time = (time.time() - self._tree_start_time) * 1000
+        self.update_folder_token_display()
+        display_complete_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 📊 Token display updated (T+{display_start_time:.2f}ms -> T+{display_complete_time:.2f}ms)")
+        
+        # Restore checked paths
+        if self._pending_tree_restore_paths:
+            restore_start_time = (time.time() - self._tree_start_time) * 1000
+            for path in self._pending_tree_restore_paths:
+                if path in self.tree_items:
+                    self.tree_items[path].setCheckState(0, Qt.CheckState.Checked)
+            self._pending_tree_restore_paths.clear()
+            restore_complete_time = (time.time() - self._tree_start_time) * 1000
+            print(f"[TREE_PANEL] ✅ Checked paths restored (T+{restore_start_time:.2f}ms -> T+{restore_complete_time:.2f}ms)")
+        
+        # Re-enable updates and expand tree
+        ui_start_time = (time.time() - self._tree_start_time) * 1000
+        self.tree_widget.setUpdatesEnabled(True)
+        self.tree_widget.expandToDepth(0)
+        ui_complete_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🌳 Tree UI updates enabled and expanded (T+{ui_start_time:.2f}ms -> T+{ui_complete_time:.2f}ms)")
+        
+        signal_start_time = (time.time() - self._tree_start_time) * 1000
+        self.root_path_changed.emit(self.root_path)
+        
+        # Final completion timing
+        total_time = (time.time() - self._tree_start_time) * 1000
+        print(f"[TREE_PANEL] 🎉 TREE POPULATION COMPLETED: {len(self.tree_items)} items in {total_time:.2f}ms")
+        print(f"[TREE_PANEL] 📈 Performance: {len(self.tree_items)/total_time*1000:.1f} items/second")
+
+    def populate_tree_optimistic(self, items, root_path):
+        """Optimistically populate tree with immediate display and loading states."""
         self.clear_tree()
         self.root_path = os.path.normpath(root_path).replace('\\', '/')
         self.tree_widget.setUpdatesEnabled(False)
-
+        
+        # Hide main loading label, show tree immediately
+        self.loading_label.setVisible(False)
+        self.tree_widget.setVisible(True)
+        
         root_item = self._add_item_to_tree(
             self.tree_widget.invisibleRootItem(), self.root_path, True, True, '', 0
         )
 
         # Step 1: Collect all directory paths that need to exist.
         all_required_dirs = {self.root_path}
-        for path_str, is_dir, _, _, _ in items:
+        files_with_loading_tokens = []
+        
+        for path_str, is_dir, _, _, token_count in items:
             norm_path = os.path.normpath(path_str).replace('\\', '/')
             path_to_ascend = norm_path if is_dir else os.path.dirname(norm_path)
             p = pathlib.Path(path_to_ascend)
             while p and str(p) != self.root_path and len(str(p)) >= len(self.root_path):
                 all_required_dirs.add(str(p).replace('\\', '/'))
                 p = p.parent
+                
+            # Track files that need token loading
+            if not is_dir and token_count == -1:
+                files_with_loading_tokens.append(norm_path)
 
-        # Step 2: Create all directory items. Sorting ensures parents are created before children.
+        # Step 2: Create all directory items
         for dir_path in sorted(list(all_required_dirs)):
             if dir_path == self.root_path or dir_path in self.tree_items:
                 continue
@@ -208,16 +431,26 @@ class TreePanel(QWidget):
             if parent_item:
                 self._add_item_to_tree(parent_item, dir_path, True, True, '', 0)
 
-        # Step 3: Create all file items.
+        # Step 3: Create all file items with loading states
         for path_str, is_dir, is_valid, reason, token_count in items:
             if not is_dir:
                 norm_path = os.path.normpath(path_str).replace('\\', '/')
                 parent_path = os.path.dirname(norm_path)
                 parent_item = self.tree_items.get(parent_path)
                 if parent_item:
-                    self._add_item_to_tree(parent_item, norm_path, False, is_valid, reason, token_count)
+                    # Show "Loading..." for files with token_count = -1
+                    display_token_count = token_count if token_count != -1 else "Loading..."
+                    item = self._add_item_to_tree(parent_item, norm_path, False, is_valid, reason, token_count)
+                    if token_count == -1:
+                        item.setText(1, "Loading...")
+                        item.setData(1, self.TOKEN_COUNT_ROLE, -1)
 
-        # Final setup steps.
+        # Show progress if there are files loading
+        if files_with_loading_tokens:
+            self.progress_label.setText(f"Loading tokens for {len(files_with_loading_tokens)} files...")
+            self.progress_label.setVisible(True)
+        
+        # Final setup steps
         self._calculate_and_store_total_tokens(root_item)
         self.update_folder_token_display()
 
@@ -230,6 +463,47 @@ class TreePanel(QWidget):
         self.tree_widget.setUpdatesEnabled(True)
         self.tree_widget.expandToDepth(0)
         self.root_path_changed.emit(self.root_path)
+        
+    def update_file_token_count(self, file_path: str, token_count: int):
+        """Update token count for a specific file."""
+        norm_path = os.path.normpath(file_path).replace('\\', '/')
+        if norm_path in self.tree_items:
+            item = self.tree_items[norm_path]
+            item.setData(1, self.TOKEN_COUNT_ROLE, token_count)
+            
+            if TIKTOKEN_AVAILABLE:
+                item.setText(1, f"{token_count:,} tokens")
+            else:
+                item.setText(1, f"{token_count:,} chars")
+                
+            # Update total token display
+            self._update_total_token_label()
+            self.file_tokens_changed.emit(file_path, token_count)
+            
+    def update_file_validation(self, file_path: str, is_valid: bool, reason: str):
+        """Update validation status for a specific file."""
+        norm_path = os.path.normpath(file_path).replace('\\', '/')
+        if norm_path in self.tree_items:
+            item = self.tree_items[norm_path]
+            
+            if not is_valid:
+                item.setText(1, reason)
+                item.setForeground(1, self.error_color)
+                item.setData(1, self.TOKEN_COUNT_ROLE, 0)
+            
+    def update_loading_progress(self, current: int, total: int):
+        """Update the loading progress display."""
+        if total > 0:
+            if current < total:
+                remaining = total - current
+                self.progress_label.setText(f"Loading tokens... {current}/{total} complete ({remaining} remaining)")
+                self.progress_label.setVisible(True)
+            else:
+                # All done
+                self.progress_label.setVisible(False)
+                self._update_total_token_label()
+        else:
+            self.progress_label.setVisible(False)
 
     def get_aggregated_content(self):
         """Aggregates content from checked files using the specified format."""
@@ -285,7 +559,17 @@ class TreePanel(QWidget):
                 item = iterator.value()
                 # Check if it's a folder (has children or was marked as a directory)
                 if item.data(0, self.IS_DIR_ROLE):
-                    selected_tokens = self._calculate_selected_tokens_for_folder(item)
+                    # Calculate selected tokens directly using BG_scanner token data
+                    selected_tokens = 0
+                    folder_iterator = QTreeWidgetItemIterator(item)
+                    while folder_iterator.value():
+                        child_item = folder_iterator.value()
+                        # Add tokens only for checked files
+                        if (child_item and not child_item.data(0, self.IS_DIR_ROLE) and 
+                            child_item.checkState(0) == Qt.CheckState.Checked):
+                            selected_tokens += child_item.data(0, self.TOKEN_COUNT_ROLE) or 0
+                        folder_iterator += 1
+                    
                     total_tokens = item.data(0, self.TOKEN_COUNT_ROLE) or 0
                     item.setText(1, f"{selected_tokens:,} / {total_tokens:,} tokens")
                 iterator += 1
@@ -293,7 +577,58 @@ class TreePanel(QWidget):
             self.tree_widget.setUpdatesEnabled(True)
 
     @Slot(list)
-    def handle_fs_events(self, event_batch):
+    def update_from_fs_events(self, event_batch):
+        self.tree_widget.setUpdatesEnabled(False)
+        try:
+            for event in event_batch:
+                action = event['action']
+                src_path = os.path.normpath(event['src_path']).replace('\\', '/')
+
+                if action == 'created':
+                    if src_path in self.tree_items or not os.path.exists(src_path):
+                        continue
+                    parent_path = os.path.dirname(src_path)
+                    parent_item = self.tree_items.get(parent_path)
+                    if parent_item:
+                        is_dir = os.path.isdir(src_path)
+                        # This part might need adjustment based on how tokens are calculated for new files
+                        token_count = 0 if is_dir else count_tokens(src_path)
+                        self._add_item_to_tree(parent_item, src_path, is_dir, True, '', token_count)
+
+                elif action == 'deleted':
+                    if src_path not in self.tree_items:
+                        continue
+                    item_to_remove = self.tree_items.pop(src_path)
+                    parent = item_to_remove.parent()
+                    if parent:
+                        parent.removeChild(item_to_remove)
+
+                elif action == 'moved':
+                    dst_path = os.path.normpath(event['dst_path']).replace('\\', '/')
+                    if src_path not in self.tree_items:
+                        continue
+
+                    item = self.tree_items.pop(src_path)
+                    item.setText(0, os.path.basename(dst_path))
+                    item.setData(0, self.PATH_DATA_ROLE, dst_path)
+                    self.tree_items[dst_path] = item
+
+                    # If it's a directory, update paths of all children
+                    if item.data(0, self.IS_DIR_ROLE):
+                        self._recursive_update_child_paths(item, src_path, dst_path)
+
+                    # Check if parent needs to be changed
+                    new_parent_path = os.path.dirname(dst_path)
+                    old_parent_item = item.parent()
+                    if old_parent_item and old_parent_item.data(0, self.PATH_DATA_ROLE) != new_parent_path:
+                        new_parent_item = self.tree_items.get(new_parent_path, self.tree_widget.invisibleRootItem())
+                        old_parent_item.removeChild(item)
+                        new_parent_item.addChild(item)
+
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.update_folder_token_display()
+            self.item_checked_changed.emit()
         self.tree_widget.setUpdatesEnabled(False)
         try:
             for event in event_batch:
@@ -346,36 +681,18 @@ class TreePanel(QWidget):
                         child = iterator.value()
                         if child is not item_to_remove:
                             child_path = child.data(0, self.PATH_DATA_ROLE)
-                            if child_path in self.tree_items:
-                                del self.tree_items[child_path]
-                        iterator += 1
-
-                    parent_item = item_to_remove.parent()
-                    (parent_item or self.tree_widget.invisibleRootItem()).removeChild(item_to_remove)
-
-                    # Recursively remove empty parent directories
-                    while parent_item and parent_item.childCount() == 0:
-                        parent_path = parent_item.data(0, self.PATH_DATA_ROLE)
-                        if parent_path == self.root_path:
-                            break
-                        
-                        grandparent_item = parent_item.parent()
-                        (grandparent_item or self.tree_widget.invisibleRootItem()).removeChild(parent_item)
-                        if parent_path in self.tree_items:
-                            del self.tree_items[parent_path]
-                        parent_item = grandparent_item
 
                 elif action == 'modified':
-                    if src_path in self.tree_items and not self.tree_items[src_path].data(0, self.IS_DIR_ROLE):
-                        item = self.tree_items[src_path]
-                        old_token_count = item.data(0, self.TOKEN_COUNT_ROLE) or 0
+                    if src_path not in self.tree_items:
+                        continue
+                    item = self.tree_items[src_path]
+                    if not item.data(0, self.IS_DIR_ROLE):
                         try:
-                            with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content = f.read()
-                            new_token_count = len(self.tokenizer.encode(content))
-                            item.setData(0, self.TOKEN_COUNT_ROLE, new_token_count)
-                            item.setText(1, f"{new_token_count:,} tokens")
-                            token_diff = new_token_count - old_token_count
+                            old_tokens = item.data(0, self.TOKEN_COUNT_ROLE) or 0
+                            new_tokens = self.tokenizer.count_tokens(src_path)
+                            item.setData(0, self.TOKEN_COUNT_ROLE, new_tokens)
+                            item.setText(1, f"{new_tokens:,} tokens")
+                            token_diff = new_tokens - old_tokens
                             if token_diff != 0:
                                 self.file_tokens_changed.emit(src_path, token_diff)
                         except Exception as e:
@@ -386,24 +703,56 @@ class TreePanel(QWidget):
                     if not dst_path or src_path not in self.tree_items:
                         continue
 
-                    # Remove the old item
-                    old_item = self.tree_items.pop(src_path)
-                    parent_item = old_item.parent() or self.tree_widget.invisibleRootItem()
-                    parent_item.removeChild(old_item)
+                    item_to_move = self.tree_items.pop(src_path)
 
-                    # Add the new item
-                    is_dir = os.path.isdir(dst_path)
-                    token_count = old_item.data(0, self.TOKEN_COUNT_ROLE) or 0
-                    
-                    new_item = self._add_item_to_tree(parent_item, dst_path, is_dir, True, '', token_count)
-                    
-                    # Restore check state
-                    new_item.setCheckState(0, old_item.checkState(0))
+                    # If a directory is moved, update paths for all its children
+                    if item_to_move.data(0, self.IS_DIR_ROLE):
+                        iterator = QTreeWidgetItemIterator(item_to_move, QTreeWidgetItemIterator.IteratorFlag.All)
+                        while iterator.value():
+                            child_item = iterator.value()
+                            old_child_path = child_item.data(0, self.PATH_DATA_ROLE)
+                            if old_child_path and old_child_path.startswith(src_path):
+                                new_child_path = old_child_path.replace(src_path, dst_path, 1)
+                                child_item.setData(0, self.PATH_DATA_ROLE, new_child_path)
+                                if old_child_path in self.tree_items:
+                                    self.tree_items.pop(old_child_path)
+                                self.tree_items[new_child_path] = child_item
+                            iterator += 1
+
+                    # Update the moved item itself
+                    item_to_move.setText(0, os.path.basename(dst_path))
+                    item_to_move.setData(0, self.PATH_DATA_ROLE, dst_path)
+                    self.tree_items[dst_path] = item_to_move
+
+                    # Check if the parent directory changed and re-parent if necessary
+                    old_parent_path = os.path.dirname(src_path)
+                    new_parent_path = os.path.dirname(dst_path)
+                    if old_parent_path != new_parent_path:
+                        old_parent_item = item_to_move.parent()
+                        if old_parent_item:
+                            old_parent_item.removeChild(item_to_move)
+                        new_parent_item = self.tree_items.get(new_parent_path) or self.tree_widget.invisibleRootItem()
+                        new_parent_item.addChild(item_to_move)
 
         finally:
             self.tree_widget.setUpdatesEnabled(True)
             self.update_folder_token_display()
             self.item_checked_changed.emit()
+
+    def _recursive_update_child_paths(self, item, old_base, new_base):
+        """Recursively update the paths of child items when a directory is moved."""
+        for i in range(item.childCount()):
+            child = item.child(i)
+            old_path = child.data(0, self.PATH_DATA_ROLE)
+            if old_path in self.tree_items:
+                del self.tree_items[old_path]
+            
+            new_path = old_path.replace(old_base, new_base, 1)
+            child.setData(0, self.PATH_DATA_ROLE, new_path)
+            self.tree_items[new_path] = child
+
+            if child.data(0, self.IS_DIR_ROLE):
+                self._recursive_update_child_paths(child, old_base, new_base)
 
     # --- Private Helper Methods ---
 
@@ -431,31 +780,11 @@ class TreePanel(QWidget):
         self.tree_items[norm_path] = item
         return item
 
-    def _calculate_selected_tokens_for_folder(self, folder_item):
-        """Recursively calculates the total tokens of checked items within a folder."""
-        selected_tokens = 0
-        iterator = QTreeWidgetItemIterator(folder_item)
-        while iterator.value():
-            item = iterator.value()
-            # Add tokens only for checked files
-            if item and not item.data(0, self.IS_DIR_ROLE) and item.checkState(0) == Qt.CheckState.Checked:
-                selected_tokens += item.data(0, self.TOKEN_COUNT_ROLE) or 0
-            iterator += 1
-        return selected_tokens
+    # REMOVED: _calculate_selected_tokens_for_folder method
+    # Selected token calculation now uses BG_scanner token data directly from tree items
 
-    def _calculate_and_store_total_tokens(self, item):
-        """Recursively calculates and stores total tokens for a folder item."""
-        # Base case: item is a file, its token count is already stored.
-        if not item.childCount() > 0:
-            return item.data(0, self.TOKEN_COUNT_ROLE) or 0
-
-        total_tokens = 0
-        for i in range(item.childCount()):
-            child = item.child(i)
-            total_tokens += self._calculate_and_store_total_tokens(child)
-        
-        item.setData(0, self.TOKEN_COUNT_ROLE, total_tokens)
-        return total_tokens
+    # REMOVED: _calculate_and_store_total_tokens method
+    # Token data is now set directly from BG_scanner results for maximum performance
 
 
 

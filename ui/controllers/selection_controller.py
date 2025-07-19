@@ -7,6 +7,14 @@ class SelectionController(QObject):
     def __init__(self, main_window):
         super().__init__(main_window)
         self.mw = main_window
+    
+    def update_ui(self):
+        """Update the selection UI components."""
+        if hasattr(self.mw, 'selection_manager_panel'):
+            self.mw.selection_manager_panel.update_groups(
+                list(self.mw.selection_groups.keys()), 
+                self.mw.active_selection_group
+            )
 
     # ---------- called by SelectionManagerPanel ----------
     @Slot(str)
@@ -21,7 +29,7 @@ class SelectionController(QObject):
     @Slot()
     def save_group(self):
         name = self.mw.selection_manager_panel.get_current_group_name()
-        paths = self.mw.tree_panel.get_checked_paths(return_set=True)
+        paths = self.mw.tree_panel.get_checked_paths(return_set=True) # This is correct, the wrapper handles it
 
         ws = self.mw.workspaces[self.mw.current_workspace_name]
         selection_manager.save_group(ws, name, "", paths)  # description handled in Edit dialog

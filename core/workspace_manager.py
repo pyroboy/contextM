@@ -22,7 +22,7 @@ _TESTING_BASE_PATH = None
 # This was in scan_config_dialog.py, moved here to avoid core -> dialogs dependency
 DEFAULT_IGNORE_FOLDERS = [
     ".git", "__pycache__", ".vscode", ".idea", "node_modules", "venv",
-    ".svn", "dist", "build", "target", "out", "bin", "obj"
+    ".svn", "dist", "build", "target", "out", "bin", "obj","csv" ,"json"
 ]
 
 def _migrate_workspaces(data):

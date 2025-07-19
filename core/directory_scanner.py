@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Signal
 # --- Import helpers ---
 # from .helpers import is_text_file, calculate_tokens
 from .helpers import calculate_tokens, MAX_FILE_SIZE_KB, MAX_FILE_SIZE_BYTES, SCAN_BATCH_SIZE # HACK: Temporarily disable is_text_file
+from .smart_file_handler import SmartFileHandler
 
 # --- Worker Thread ---
 class DirectoryScanner(QThread):
@@ -98,19 +99,28 @@ class DirectoryScanner(QThread):
                     is_valid, reason = self._check_file_validity_with_detection(file_path_obj)
                     token_count = 0
 
-                    # Calculate tokens only for valid files
+                    # NO TOKENIZATION DURING SCAN - All tokenization deferred to worker process
                     if is_valid:
                         try:
-                            # Read only up to max size for tokenization (or slightly more to check if truncated)
-                            with open(file_path_obj, 'rb') as f:
-                                raw_bytes = f.read(MAX_FILE_SIZE_BYTES + 1) # Read a bit extra
-                            content = raw_bytes[:MAX_FILE_SIZE_BYTES].decode('utf-8', errors='replace') # Decode safely only the part within limit
-                            token_count = calculate_tokens(content)
+                            file_size = file_path_obj.stat().st_size
+                            strategy = SmartFileHandler.get_tokenization_strategy(str(file_path_obj), file_size)
+                            
+                            print(f"[SCANNER] File {file_path_obj.name} ({file_size//1024}KB) -> {strategy} (deferred to worker)")
+                            
+                            if strategy == 'skip':
+                                # Skip tokenization entirely - mark with 0 tokens and reason
+                                token_count, reason = SmartFileHandler.get_file_display_info(str(file_path_obj), file_size, strategy)
+                                print(f"[SCANNER] Will skip {file_path_obj.name}: {reason}")
+                            else:
+                                # ALL other files deferred to worker process (mark as -1 for "loading...")
+                                token_count = -1
+                                print(f"[SCANNER] Deferred {file_path_obj.name} to worker process")
+                                
                         except Exception as e:
-                            print(f"Could not read/tokenize file {file_path_obj} during scan: {e}")
-                            # Mark as invalid if read/tokenize fails after initial checks passed
+                            print(f"[SCANNER] Could not process file {file_path_obj} during scan: {e}")
+                            # Mark as invalid if processing fails
                             is_valid = False
-                            reason = f"Read/Tokenize Error" # Simplified reason
+                            reason = f"Processing Error: {str(e)[:50]}"
 
                     # Add file item to batch
                     item_batch.append((file_path_str, False, is_valid, reason, token_count))

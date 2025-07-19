@@ -6,6 +6,7 @@ from watchdog.observers.polling import PollingObserver as Observer
 import fnmatch
 from watchdog.events import FileSystemEventHandler, FileSystemMovedEvent
 from PySide6.QtCore import QObject, Signal, QTimer
+from .tokenizer import count_tokens
 
 class _EventHandler(FileSystemEventHandler):
     def __init__(self, event_queue, ignore_rules):
@@ -17,6 +18,7 @@ class _EventHandler(FileSystemEventHandler):
         if event.is_directory or self._is_ignored(event.src_path):
             return
         
+        # Just put the raw event data in the queue
         event_data = {
             'action': event.event_type,
             'src_path': event.src_path,
@@ -33,6 +35,7 @@ class _EventHandler(FileSystemEventHandler):
 
 class FileWatcher(QObject):
     fs_event_batch = Signal(list)
+    file_token_changed = Signal(str, int)  # file_path, token_diff
 
     def __init__(self, root_path, ignore_rules):
         super().__init__()
@@ -40,6 +43,7 @@ class FileWatcher(QObject):
         # Ensure we get a set of patterns
         self.ignore_rules = set(ignore_rules or [])
         self.event_queue = queue.Queue()
+        self.token_cache = {}
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -71,12 +75,11 @@ class FileWatcher(QObject):
     def _run_observer(self):
         """This method runs in the background thread."""
         event_handler = _EventHandler(self.event_queue, self.ignore_rules)
-        # Forcing PollingObserver to avoid platform-specific issues with Qt
         observer = Observer()
         observer.schedule(event_handler, self.root_path, recursive=True)
         observer.start()
         while not self._stop_event.is_set():
-            time.sleep(0.1) # Wait for a short period
+            time.sleep(0.1)
         observer.stop()
         observer.join()
 
@@ -85,12 +88,29 @@ class FileWatcher(QObject):
         if self.event_queue.empty():
             return
 
-        batch = []
+        fs_events = []
         while not self.event_queue.empty():
             try:
-                batch.append(self.event_queue.get_nowait())
+                event = self.event_queue.get_nowait()
+                if event['action'] == 'modified':
+                    # Handle token changes here in the main thread
+                    path = event['src_path']
+                    old_tokens = self.token_cache.get(path, count_tokens(path))
+                    new_tokens = count_tokens(path)
+                    token_diff = new_tokens - old_tokens
+                    self.token_cache[path] = new_tokens
+                    if token_diff != 0:
+                        self.file_token_changed.emit(path, token_diff)
+                else:
+                    fs_events.append(event)
+                    # Update token cache for moves/deletes
+                    if event['action'] == 'deleted' and event['src_path'] in self.token_cache:
+                        del self.token_cache[event['src_path']]
+                    elif event['action'] == 'moved' and event['src_path'] in self.token_cache:
+                        self.token_cache[event['dst_path']] = self.token_cache.pop(event['src_path'])
+
             except queue.Empty:
                 break
         
-        if batch:
-            self.fs_event_batch.emit(batch)
+        if fs_events:
+            self.fs_event_batch.emit(fs_events)

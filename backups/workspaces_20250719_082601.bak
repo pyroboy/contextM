@@ -22,11 +22,17 @@
                     "obj",
                     "out",
                     "target",
-                    "venv"
+                    "venv",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json"
                 ],
                 "live_watcher": true
             },
-            "instructions": "sadasd",
+            "instructions": "",
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
@@ -35,13 +41,25 @@
                         ".",
                         "Format__I_LIKE.md",
                         "PRD v1.md",
+                        "backups",
+                        "backups\\fdsfsdasdasAARJO.txt",
+                        "backups\\workspaces_20250719_074127.bak",
+                        "backups\\workspaces_20250719_080721.bak",
+                        "backups\\workspaces_20250719_081916.bak",
+                        "backups\\workspaces_20250719_081917.bak",
+                        "backups\\workspaces_20250719_082348.bak",
                         "core",
                         "core\\__init__.py",
                         "core\\directory_scanner.py",
                         "core\\helpers.py",
+                        "core\\optimistic_loader.py",
+                        "core\\qt_thread_tokenizer.py",
                         "core\\scanner.py",
                         "core\\selection_manager.py",
+                        "core\\smart_file_handler.py",
+                        "core\\tokenizer.py",
                         "core\\watcher.py",
+                        "core\\worker_process_tokenizer.py",
                         "core\\workspace_manager.py",
                         "custom_instructions.json",
                         "dialogs",
@@ -52,9 +70,9 @@
                         "main.py",
                         "package-lock.json",
                         "package.json",
-                        "rat.txt",
                         "requirements-test.txt",
                         "requirements.txt",
+                        "test_change.txt",
                         "tests",
                         "tests\\__init__.py",
                         "tests\\e2e",
@@ -113,5 +131,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "323efbea3798346f3303aec0535684869b19f170f6f53c3275b1ee677967e904"
+    "checksum": "14d0ca8b5296e185f994227606a0bc2a71f199b143626a5ec8ea99dc53667d5a"
 }

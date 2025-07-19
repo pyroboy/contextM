@@ -22,7 +22,15 @@
                     "obj",
                     "out",
                     "target",
-                    "venv"
+                    "venv",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json",
+                    "workspaces.json"
                 ],
                 "live_watcher": true
             },
@@ -37,5 +45,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "48061b57db17d8b101998728586d80cbe788ab7376a003c63796747e55ca2912"
+    "checksum": "4c564a5c36f8cc2e98aeeb2e16f5436f7e45eafbdedb7631d2dc62cbbdc3cbba"
 }
