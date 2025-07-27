@@ -177,7 +177,7 @@ class TreePanel(QWidget):
         # Trigger updates after all changes are made
         self.item_checked_changed.emit()
 
-    def get_checked_paths(self, return_set=False, relative=False):
+    def get_checked_paths(self, relative=False, return_set=False):
         """Gets the paths of all checked items in the tree."""
         checked_paths = set()
         iterator = QTreeWidgetItemIterator(self.tree_widget)

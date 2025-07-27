@@ -1248,3 +1248,21 @@ class MainWindow(QMainWindow):
             print(f"[INSTRUCTIONS] ❌ Error processing custom instructions changes: {e}")
             import traceback
             traceback.print_exc()
+    
+    @Slot()
+    def _on_model_data_changed(self, top_left, bottom_right, roles):
+        """Handle model data changes, specifically checkbox state changes."""
+        from PySide6.QtCore import Qt
+        if Qt.ItemDataRole.CheckStateRole in roles:
+            self.selection_manager_panel.set_dirty(True)
+            print("[SELECTION] 🔄 Model checkbox changed - selection manager marked as dirty")
+            # Immediately update aggregation view
+            self.update_aggregation_and_tokens()
+    
+    @Slot()
+    def _on_checkbox_changed(self):
+        """Handle checkbox state changes for dirty state tracking."""
+        self.selection_manager_panel.set_dirty(True)
+        print("[SELECTION] 🔄 Checkbox changed - selection manager marked as dirty")
+        # Immediately update aggregation view
+        self.update_aggregation_and_tokens()

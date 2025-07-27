@@ -31,10 +31,7 @@
             "selection_groups": {
                 "Default": {
                     "description": "Default selection",
-                    "checked_paths": [
-                        ".env",
-                        ".gitignore"
-                    ]
+                    "checked_paths": []
                 }
             }
         },
@@ -74,5 +71,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "9edd14a4f0f8312eb7ac3a9f489cc285a5ab0dea1b965976166f0631180db2c3"
+    "checksum": "f10ff88f544705004486163732ff1201a04ee0d17a2ffcac8f5079ed11bf239e"
 }

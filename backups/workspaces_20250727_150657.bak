@@ -22,7 +22,8 @@
                     "obj",
                     "out",
                     "target",
-                    "venv"
+                    "venv",
+                    "workspaces.json"
                 ]
             },
             "instructions": "Instructions sadasdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
@@ -30,7 +31,10 @@
             "selection_groups": {
                 "Default": {
                     "description": "Default selection",
-                    "checked_paths": []
+                    "checked_paths": [
+                        ".env",
+                        ".gitignore"
+                    ]
                 }
             }
         },
@@ -70,5 +74,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "582f386c9e04ff436cefd55c054a6523a675d10cd20d9e4a18b19a468250f751"
+    "checksum": "9edd14a4f0f8312eb7ac3a9f489cc285a5ab0dea1b965976166f0631180db2c3"
 }

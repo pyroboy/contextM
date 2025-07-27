@@ -198,21 +198,22 @@ class TreePanelMV(QWidget):
         """Get total token count for selected/checked items."""
         return self.file_tree_view.get_selected_token_count()
         
-    def get_checked_paths(self, relative: bool = False) -> List[str]:
+    def get_checked_paths(self, relative: bool = False, return_set: bool = False):
         """Get list of checked file paths.
         
         Args:
             relative: If True, return paths relative to root_path
                      If False, return absolute paths
+            return_set: If True, return a set instead of list
         
         Returns:
-            List of checked file paths
+            List or set of checked file paths
         """
         # Delegate to the model's get_checked_paths method
         checked_paths = self.file_tree_view.model.get_checked_paths()
         
         if not relative or not self.root_path:
-            return checked_paths
+            return set(checked_paths) if return_set else checked_paths
             
         # Convert to relative paths
         relative_paths = []
@@ -224,7 +225,7 @@ class TreePanelMV(QWidget):
                 # If relative path conversion fails, use the original path
                 relative_paths.append(path)
                 
-        return relative_paths
+        return set(relative_paths) if return_set else relative_paths
         
     def get_aggregated_content(self):
         """Aggregates content from checked files using the specified format."""

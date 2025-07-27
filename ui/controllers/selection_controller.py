@@ -80,12 +80,28 @@ class SelectionController(QObject):
     @Slot()
     def save_group(self):
         name = self.mw.selection_manager_panel.get_current_group_name()
-        paths = self.mw.tree_panel.get_checked_paths(return_set=True) # This is correct, the wrapper handles it
-
-        ws = self.mw.workspaces[self.mw.current_workspace_name]
+        # Get checked paths as relative paths for storage
+        paths = self.mw.tree_panel.get_checked_paths(relative=True, return_set=True)
+        
+        ws = self.mw.workspaces['workspaces'][self.mw.current_workspace_name]
         selection_manager.save_group(ws, name, "", paths)  # description handled in Edit dialog
-        self.mw.selection_manager_panel.update_groups(list(self.mw.selection_groups.keys()), name)
+        
+        # Update workspace state
+        self.mw.selection_groups = selection_manager.load_groups(ws)
+        self.mw.active_selection_group = name
+        
+        # Update UI
+        self.mw.selection_manager_panel.update_groups(
+            list(self.mw.selection_groups.keys()), 
+            name
+        )
         self.mw.selection_manager_panel.set_dirty(False)
+        
+        # Update aggregation view
+        if hasattr(self.mw, 'update_aggregation_and_tokens'):
+            self.mw.update_aggregation_and_tokens()
+
+        print(f"[SELECTION] ✅ Group '{name}' saved with {len(paths)} paths")
 
     @Slot()
     def new_group(self):
