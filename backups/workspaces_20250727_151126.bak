@@ -26,14 +26,12 @@
                     "workspaces.json"
                 ]
             },
-            "instructions": "Instructions sadasdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
+            "instructions": "Instructions sadareetwertsgdfgsdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
-                    "description": "Default selection",
-                    "checked_paths": [
-                        ".env"
-                    ]
+                    "description": "",
+                    "checked_paths": []
                 }
             }
         },
@@ -66,12 +64,15 @@
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
-                    "description": "Default selection",
-                    "checked_paths": []
+                    "description": "",
+                    "checked_paths": [
+                        "DIRTY_STATE_TRACKING.md",
+                        "Format__I_LIKE.md"
+                    ]
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "4702678b7a0627d648aa0f0a145bc8e26d6bae07bf0c958d8e4f2580a0c89ee8"
+    "checksum": "618989914c95e36ac254711c8a5696ce387e1803d28e3f7b647aea514e80fd57"
 }

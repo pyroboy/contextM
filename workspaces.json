@@ -26,14 +26,16 @@
                     "workspaces.json"
                 ]
             },
-            "instructions": "Instructions sadasdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
+            "instructions": "Instructions sadareetwertsgdfgsdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
-                    "description": "Default selection",
+                    "description": "",
                     "checked_paths": [
                         ".env",
-                        ".gitignore"
+                        ".gitignore",
+                        ".npmrc",
+                        ".prettierignore"
                     ]
                 }
             }
@@ -67,12 +69,12 @@
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
-                    "description": "Default selection",
+                    "description": "",
                     "checked_paths": []
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "9edd14a4f0f8312eb7ac3a9f489cc285a5ab0dea1b965976166f0631180db2c3"
+    "checksum": "c0958ee2b3f723799e4ed99ae9ad1311515d258f11568436cbbc2c8a4656f9d7"
 }

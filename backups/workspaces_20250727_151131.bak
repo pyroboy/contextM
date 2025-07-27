@@ -26,7 +26,7 @@
                     "workspaces.json"
                 ]
             },
-            "instructions": "Instructions sadasdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
+            "instructions": "Instructions sadareetwertsgdfgsdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
@@ -68,12 +68,15 @@
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
-                    "description": "Default selection",
-                    "checked_paths": []
+                    "description": "",
+                    "checked_paths": [
+                        "DIRTY_STATE_TRACKING.md",
+                        "Format__I_LIKE.md"
+                    ]
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "439712ef89a88c806d8be469b1dc60a1dda89670f40756e998096258157c96ad"
+    "checksum": "2e7f982ee1cfa6c7a75d0e82c894d01601785eb975ae2759b104e2e37465712c"
 }
