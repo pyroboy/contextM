@@ -162,10 +162,15 @@ class MainWindow(QMainWindow):
         if hasattr(self.tree_panel, 'item_checked_changed'):
             self.tree_panel.item_checked_changed.connect(self._on_tree_selection_changed)
             self.tree_panel.item_checked_changed.connect(self.update_aggregation_and_tokens)
+            # Connect to selection manager dirty tracking for old TreePanel
+            self.tree_panel.item_checked_changed.connect(self._on_checkbox_changed)
         else:
             # Model/View uses selection_changed signal
             self.tree_panel.selection_changed.connect(self._on_tree_selection_changed)
             self.tree_panel.selection_changed.connect(self.update_aggregation_and_tokens)
+            # Connect model's dataChanged signal to selection manager dirty tracking for Model/View TreePanel
+            if hasattr(self.tree_panel, 'file_tree_view') and hasattr(self.tree_panel.file_tree_view, 'model'):
+                self.tree_panel.file_tree_view.model.dataChanged.connect(self._on_model_data_changed)
         self.left_splitter.addWidget(self.selection_manager_panel)
         self.left_splitter.addWidget(self.tree_panel)
         self.left_splitter.setStretchFactor(0, 0)
@@ -313,10 +318,16 @@ class MainWindow(QMainWindow):
     def _save_current_workspace_state(self):
         if self.workspaces:
             workspace_manager.save_workspaces(self.workspaces)
+            # Show status message for workspace save
+            if self.current_workspace_name:
+                clean_name = self.current_workspace_name.split(' (')[0].strip()
+                self.statusBar().showMessage(f"Workspace '{clean_name}' saved.", 3000)
 
     def _switch_workspace(self, workspace_name, initial_load=False):
         """Atomic workspace switch with complete data validation and error handling."""
-        print(f"[WORKSPACE_SWITCH] 🔄 Initiating atomic switch to: '{workspace_name}' (initial_load: {initial_load})")
+        # Clean workspace name (remove any display suffixes like " (folder_name)")
+        clean_workspace_name = workspace_name.split(' (')[0].strip()
+        print(f"[WORKSPACE_SWITCH] 🔄 Initiating atomic switch to: '{clean_workspace_name}' (original: '{workspace_name}', initial_load: {initial_load})")
         
         try:
             # Phase 1: Pre-Switch State Capture
@@ -326,28 +337,31 @@ class MainWindow(QMainWindow):
                 self._save_current_workspace_state()
                 print(f"[WORKSPACE_SWITCH] ✅ Current workspace state saved")
             
-            # Phase 2: Workspace Data Validation
-            if not self._validate_workspace_exists(workspace_name):
-                if workspace_name == "Default":
+            # Phase 2: Workspace Data Validation (use cleaned name)
+            if not self._validate_workspace_exists(clean_workspace_name):
+                if clean_workspace_name == "Default":
                     print(f"[WORKSPACE_SWITCH] 🏗️ Creating missing Default workspace")
                     self._create_default_workspace()
                 else:
-                    print(f"[WORKSPACE_SWITCH] ❌ Workspace '{workspace_name}' does not exist")
+                    print(f"[WORKSPACE_SWITCH] ❌ Workspace '{clean_workspace_name}' does not exist")
                     return False
             
-            # Phase 3: Atomic Workspace Load
-            workspace_data = self._load_workspace_data(workspace_name)
+            # Phase 3: Atomic Workspace Load (use cleaned name)
+            workspace_data = self._load_workspace_data(clean_workspace_name)
             if not workspace_data:
-                print(f"[WORKSPACE_SWITCH] ❌ Failed to load workspace data for '{workspace_name}'")
+                print(f"[WORKSPACE_SWITCH] ❌ Failed to load workspace data for '{clean_workspace_name}'")
                 return False
             
-            # Phase 4: Apply Workspace State (All-or-Nothing)
-            success = self._apply_workspace_state(workspace_name, workspace_data)
+            # Phase 4: Apply Workspace State (All-or-Nothing, use cleaned name)
+            success = self._apply_workspace_state(clean_workspace_name, workspace_data)
             if not success:
-                print(f"[WORKSPACE_SWITCH] ❌ Failed to apply workspace state for '{workspace_name}'")
+                print(f"[WORKSPACE_SWITCH] ❌ Failed to apply workspace state for '{clean_workspace_name}'")
                 return False
             
-            print(f"[WORKSPACE_SWITCH] ✅ Atomic workspace switch to '{workspace_name}' completed successfully")
+            print(f"[WORKSPACE_SWITCH] ✅ Atomic workspace switch to '{clean_workspace_name}' completed successfully")
+            # Show status message for successful workspace switch
+            if not initial_load:  # Don't show message during startup
+                self.statusBar().showMessage(f"Workspace '{clean_workspace_name}' loaded.", 3000)
             return True
             
         except Exception as e:
@@ -594,7 +608,7 @@ class MainWindow(QMainWindow):
                 # Add workspace file to ignore patterns to prevent save loops
                 ws_file_path = workspace_manager._get_workspace_file_path()
                 if ws_file_path:
-                    ignore_rules.append(str(pathlib.Path(ws_file_path).name))
+                    ignore_rules.add(str(pathlib.Path(ws_file_path).name))
 
                 self.file_watcher = FileWatcher(self.current_folder_path, ignore_rules)
                 self.file_watcher.fs_event_batch.connect(self.tree_panel.update_from_fs_events)
@@ -821,6 +835,44 @@ class MainWindow(QMainWindow):
                 print(f"[TREE] ✅ Workspace state saved after selection change")
             except Exception as e:
                 print(f"[TREE] ❌ Error saving workspace state after selection change: {e}")
+
+    @Slot()
+    def _on_checkbox_changed(self):
+        """Handle checkbox state changes for dirty state tracking."""
+        # Mark selection manager as dirty when checkboxes are toggled
+        self.selection_manager_panel.set_dirty(True)
+        print(f"[SELECTION] 🔄 Checkbox changed - selection manager marked as dirty")
+
+    @Slot()
+    def _on_model_data_changed(self, top_left, bottom_right, roles):
+        """Handle model data changes, specifically checkbox state changes."""
+        from PySide6.QtCore import Qt
+        
+        # Check if this was a checkbox state change
+        if Qt.ItemDataRole.CheckStateRole in roles:
+            # Mark selection manager as dirty when checkboxes are toggled
+            self.selection_manager_panel.set_dirty(True)
+            print(f"[SELECTION] 🔄 Model checkbox changed - selection manager marked as dirty")
+
+    @Slot()
+    def _on_instructions_changed(self):
+        """Handle instruction changes and update aggregation view."""
+        try:
+            print(f"[INSTRUCTIONS] 🔄 Instructions changed - updating aggregation view...")
+            
+            # Update the aggregation view with new instructions
+            self.update_aggregation_and_tokens()
+            
+            # Save workspace state to persist instruction changes
+            if self.current_workspace_name and self.workspaces:
+                self._update_current_workspace_state()
+                self._save_current_workspace_state()
+                print(f"[INSTRUCTIONS] ✅ Workspace state saved after instruction change")
+                
+        except Exception as e:
+            print(f"[INSTRUCTIONS] ❌ Error handling instruction change: {e}")
+            import traceback
+            traceback.print_exc()
 
     @Slot()
     def update_aggregation_and_tokens(self):
@@ -1118,5 +1170,81 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             print(f"[TOKEN_VERIFICATION] ❌ Error during verification: {e}")
+
+    @Slot()
+    def _open_custom_instructions_dialog(self):
+        """Open the custom instructions manager dialog."""
+        try:
+            print(f"[INSTRUCTIONS] 🔧 Opening custom instructions manager...")
+            
+            # Get current workspace data for local templates
+            workspace_data = {}
+            if self.current_workspace_name and self.workspaces:
+                clean_workspace_name = self.current_workspace_name.split(' (')[0].strip()
+                if clean_workspace_name in self.workspaces.get('workspaces', {}):
+                    workspace_data = self.workspaces['workspaces'][clean_workspace_name].copy()
+            
+            # Ensure workspace data has required fields
+            if 'use_local_templates' not in workspace_data:
+                workspace_data['use_local_templates'] = False
+            if 'local_custom_instructions' not in workspace_data:
+                workspace_data['local_custom_instructions'] = {}
+            
+            # Create and show dialog
+            dialog = CustomInstructionsDialog(
+                global_instructions=self.custom_instructions,
+                workspace_data=workspace_data,
+                parent=self
+            )
+            
+            # Connect dialog signals
+            dialog.instructions_changed.connect(self._on_custom_instructions_changed)
+            
+            # Show dialog
+            result = dialog.exec()
+            
+            print(f"[INSTRUCTIONS] ✅ Custom instructions dialog closed with result: {result}")
+            
+        except Exception as e:
+            print(f"[INSTRUCTIONS] ❌ Error opening custom instructions dialog: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    @Slot(dict, bool, dict)
+    def _on_custom_instructions_changed(self, global_instructions, use_local_templates, local_instructions):
+        """Handle changes from the custom instructions dialog."""
+        try:
+            print(f"[INSTRUCTIONS] 🔄 Processing custom instructions changes...")
+            
+            # Update global instructions
+            self.custom_instructions = global_instructions
+            
+            # Update current workspace data if we have a workspace
+            if self.current_workspace_name and self.workspaces:
+                clean_workspace_name = self.current_workspace_name.split(' (')[0].strip()
+                if clean_workspace_name in self.workspaces.get('workspaces', {}):
+                    workspace = self.workspaces['workspaces'][clean_workspace_name]
+                    workspace['use_local_templates'] = use_local_templates
+                    workspace['local_custom_instructions'] = local_instructions
+            
+            # Save global instructions to file
+            workspace_manager.save_custom_instructions(self.custom_instructions, base_path=self.testing_path)
+            
+            # Update instructions panel with new templates
+            if hasattr(self, 'instructions_panel'):
+                self.instructions_panel.populate_templates(self.custom_instructions)
+                print(f"[INSTRUCTIONS] ✅ Instructions panel templates updated")
+            
+            # Save workspace state to persist local template settings
+            self._update_current_workspace_state()
+            self._save_current_workspace_state()
+            
+            # Update aggregation view with any instruction changes
+            self.update_aggregation_and_tokens()
+            
+            print(f"[INSTRUCTIONS] ✅ Custom instructions changes processed successfully")
+            
+        except Exception as e:
+            print(f"[INSTRUCTIONS] ❌ Error processing custom instructions changes: {e}")
             import traceback
             traceback.print_exc()

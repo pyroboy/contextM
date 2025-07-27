@@ -236,7 +236,10 @@ class WorkspaceManagerDialog(QDialog):
         """Sets the selected workspace and accepts the dialog."""
         selected_item = self.workspace_list.currentItem()
         if selected_item:
-            self.selected_workspace_on_close = selected_item.text()
+            # Extract clean workspace name (remove display suffixes like " (folder_name)")
+            display_text = selected_item.text()
+            clean_name = display_text.split('  (')[0].strip()  # Note: double space before parentheses
+            self.selected_workspace_on_close = clean_name
             self.accept()
 
     def get_selected_workspace(self):

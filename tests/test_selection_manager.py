@@ -1,3 +1,90 @@
+import pytest
+from unittest.mock import MagicMock
+from core import selection_manager
+
+@pytest.fixture
+
+def workspace_mock():
+    return {
+        "selection_groups": {
+            "Default": {"description": "Default selection", "checked_paths": []},
+            "My Group": {"description": "Test group", "checked_paths": ["/path/to/file"]}
+        },
+        "active_selection_group": "Default"
+    }
+
+def test_checking_unchecking_updates_dirty_state(tree_panel, workspace_mock):
+    tree_panel.populate_tree([
+        ("/path/to/file", False, True, '', 0),
+        ("/path/to/another_file", False, True, '', 0)
+    ])
+
+    item = tree_panel.tree_items["/path/to/file"]
+    item.setCheckState(0, Qt.CheckState.Checked)
+    assert tree_panel.tree_widget.item(0).checkState(0) == Qt.CheckState.Checked
+
+
+def test_group_switch_saves_restores_selection(tree_panel, workspace_mock):
+    selection_manager.save_group(workspace_mock, 'Test Group', '', {'/path/to/another_file'})
+    
+    panel = SelectionManagerPanel(workspace_mock)
+    
+    panel.update_groups(list(workspace_mock['selection_groups'].keys()), 'Default')
+    assert workspace_mock['active_selection_group'] == 'Default'
+
+    panel.group_combo.setCurrentText('Test Group')
+    panel.set_dirty(True)
+    assert panel.get_current_group_name(with_dirty_marker=True) == 'Test Group*'
+
+
+
+def test_selection_persistence_across_restarts(tree_panel, workspace_mock):
+    # Simulating a selection before saving
+    tree_panel.populate_tree([
+        ("/path/to/file", False, True, '', 0),
+        ("/path/to/another_file", False, True, '', 0)
+    ])
+
+    selected_paths = {"/path/to/file"}
+    selection_manager.save_group(workspace_mock, 'Persistent Group', '', selected_paths)
+
+    # Simulate restart
+    saved_data = selection_manager.load_groups(workspace_mock)
+    assert 'Persistent Group' in saved_data
+    assert saved_data['Persistent Group']['checked_paths'] == ["/path/to/file"]
+    
+def test_cache_synchronization(tree_panel, workspace_mock):
+    # Initially populate with some items
+    event_batch = [
+        {'action': 'created', 'src_path': '/path/to/new_file'}
+    ]
+    
+    tree_panel.populate_tree([
+        "/path/to/file", False, True, '', 0
+    ])
+
+    with patch('tree_panel.set_checked_paths', return_value=True) as mock_method:
+        tree_panel.update_from_fs_events(event_batch)
+        mock_method.assert_called_once()
+
+    # Validate cache synchronicity
+    assert '/path/to/new_file' in tree_panel.tree_items
+
+
+def test_checkbox_states_correctly_calculated(tree_panel, workspace_mock):
+    tree_panel.populate_tree([
+        "/folder", True, True, '', 0
+    ])
+    file1 = tree_panel.tree_items["/folder/file1.py"]
+    file2 = tree_panel.tree_items["/folder/file2.py"]
+
+    file1.setCheckState(0, Qt.CheckState.Checked)
+    file2.setCheckState(0, Qt.CheckState.Checked)
+
+    # Validate correct calculation by checking a parent
+    folder_item = tree_panel.tree_items["/folder"]
+    assert folder_item.checkState(0) == Qt.CheckState.Checked
+
 # tests/test_selection_manager.py
 
 """Unit tests for the selection_manager core logic."""

@@ -4,7 +4,7 @@ Replaces QTreeWidget for scalable performance with large file trees.
 """
 
 import os
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Set
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QObject
 from PySide6.QtGui import QIcon
 
@@ -19,6 +19,7 @@ class TreeNode:
         self.token_count = 0
         self.is_valid = True
         self.reason = ""
+        self.name = os.path.basename(path) if path else ""
         
     def add_child(self, child):
         """Add a child node."""
@@ -86,39 +87,47 @@ class FileTreeModel(QAbstractItemModel):
         self.root_path = ""
         self.endResetModel()
         
-    def populate_from_bg_scanner(self, items: List[Tuple], root_path: str) -> None:
+    def populate_from_bg_scanner(self, items: List[Tuple], root_path: str, pending_restore_paths: Optional[Set[str]] = None) -> None:
         """
         Populate model with data from BG_scanner results.
         This is the key performance optimization - direct data loading.
+        
+        Args:
+            items: List of tuples containing file/directory information
+            root_path: The root path for the tree
+            pending_restore_paths: Optional set of paths to restore as checked after population
         """
         self.beginResetModel()
         
-        # Clear existing data
+        # Clear existing data - ensure all nodes start with unchecked state
         self.root_node = TreeNode("", True)
         self.path_to_node.clear()
-        self._checked_files.clear()  # CRITICAL: Clear cached checked files
+        self._checked_files.clear()  # CRITICAL: Clear cached checked files to ensure clean state
         self.root_path = os.path.normpath(root_path).replace('\\', '/')
         
-        # Create root project node
+        # Create root project node (starts unchecked by default)
         project_node = TreeNode(self.root_path, True, self.root_node)
-        project_node.name = os.path.basename(self.root_path)
         self.root_node.add_child(project_node)
         self.path_to_node[self.root_path] = project_node
         
         # Sort items: directories first, then files
         sorted_items = sorted(items, key=lambda x: (not x[1], x[0]))  # dirs first, then by path
         
-        # Create all directory nodes first
+        # Create all directory nodes first (all start unchecked by default)
         for path_str, is_dir, rel_path, file_size, tokens in sorted_items:
             if is_dir:
                 norm_path = os.path.normpath(path_str).replace('\\', '/')
                 self._ensure_directory_path(norm_path)
         
-        # Then add all files
+        # Then add all files (all start unchecked by default)
         for path_str, is_dir, rel_path, file_size, tokens in sorted_items:
             if not is_dir:
                 norm_path = os.path.normpath(path_str).replace('\\', '/')
                 self._add_file_node(norm_path, file_size, tokens)
+        
+        # Apply pending paths to restore after population (if provided)
+        if pending_restore_paths:
+            self._restore_checked_paths(pending_restore_paths)
         
         self.endResetModel()
         
@@ -136,7 +145,6 @@ class FileTreeModel(QAbstractItemModel):
             
         # Create this directory node
         dir_node = TreeNode(dir_path, True, parent_node)
-        dir_node.name = os.path.basename(dir_path)
         parent_node.add_child(dir_node)
         self.path_to_node[dir_path] = dir_node
         
@@ -149,12 +157,44 @@ class FileTreeModel(QAbstractItemModel):
         
         # Create file node
         file_node = TreeNode(file_path, False, parent_node)
-        file_node.name = os.path.basename(file_path)
         file_node.file_size = file_size
         file_node.token_count = tokens
         
         parent_node.add_child(file_node)
         self.path_to_node[file_path] = file_node
+        
+    def _restore_checked_paths(self, pending_restore_paths: Set[str]) -> None:
+        """Restore checked state for pending paths after tree population.
+        
+        This method ensures that:
+        1. Only file paths (not directories) are checked
+        2. Parent states are properly updated to reflect child selections
+        3. The _checked_files cache is properly maintained
+        
+        Args:
+            pending_restore_paths: Set of file paths to restore as checked
+        """
+        nodes_to_update_parents_for = []
+        
+        # Set checked state for files that exist in the tree
+        for path in pending_restore_paths:
+            # Normalize the path to match our storage format
+            norm_path = os.path.normpath(path).replace('\\', '/')
+            
+            if norm_path in self.path_to_node:
+                node = self.path_to_node[norm_path]
+                # Only restore checked state for files, not directories
+                if not node.is_dir:
+                    node.check_state = Qt.CheckState.Checked
+                    # Update cached checked files set
+                    self._checked_files.add(norm_path)
+                    nodes_to_update_parents_for.append(node)
+        
+        # Update parent states efficiently by collecting unique parents
+        if nodes_to_update_parents_for:
+            unique_parents = {node.parent for node in nodes_to_update_parents_for if node.parent}
+            for parent_node in unique_parents:
+                self._update_parent_states(parent_node)
         
     # QAbstractItemModel interface implementation
     
@@ -445,25 +485,37 @@ class FileTreeModel(QAbstractItemModel):
         return self.path_to_node.get(path)
         
     def get_checked_paths(self) -> List[str]:
-        """Get a list of all checked file paths, ignoring partially checked folders."""
-        # Use cached set for O(1) performance instead of O(n) iteration
-        cached_result = list(self._checked_files)
+        """Get a list of all checked file paths, ignoring partially checked folders.
         
-        # Temporary debug: Verify cache matches actual node states
-        actual_checked = []
-        for path, node in self.path_to_node.items():
-            if not node.is_dir and node.check_state == Qt.CheckState.Checked:
-                actual_checked.append(path)
+        This method traverses the tree dynamically to collect checked file paths
+        and ensures the cache is synchronized with the actual tree state.
+        """
+        # Collect checked file paths by traversing the tree
+        checked_paths = []
+        self._collect_checked_file_paths(self.root_node, checked_paths)
         
-        if set(cached_result) != set(actual_checked):
-            print(f"[SYNC_DEBUG] Cache mismatch detected!")
-            print(f"[SYNC_DEBUG] Cached: {len(cached_result)} files: {sorted(cached_result)[:5]}...")
-            print(f"[SYNC_DEBUG] Actual: {len(actual_checked)} files: {sorted(actual_checked)[:5]}...")
-            # Return actual state for now to maintain functionality
-            return actual_checked
+        # Synchronize the cache with the actual tree state
+        actual_checked_set = set(checked_paths)
+        if self._checked_files != actual_checked_set:
+            # Cache is out of sync, update it
+            self._checked_files = actual_checked_set.copy()
         
-        return cached_result
+        return checked_paths
         
+    def _collect_checked_file_paths(self, node: TreeNode, checked_paths: List[str]) -> None:
+        """Recursively collect checked file paths (not directory paths).
+        
+        This method only collects paths for files that are checked, ignoring
+        directories even if they are checked or partially checked.
+        """
+        # Only collect file paths (not directory paths) that are checked
+        if not node.is_dir and node.check_state == Qt.CheckState.Checked and node.path:
+            checked_paths.append(node.path)
+        
+        # Recursively traverse all children
+        for child in node.children:
+            self._collect_checked_file_paths(child, checked_paths)
+    
     def _collect_checked_paths(self, node: TreeNode, checked_paths: List[str]) -> None:
         """Recursively collect checked paths."""
         if node.is_checked and node.path:

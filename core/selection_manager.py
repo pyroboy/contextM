@@ -29,7 +29,7 @@ def save_group(workspace_dict: dict, name: str, description: str, paths: Set[str
 
     workspace_dict["selection_groups"][name] = {
         "description": description,
-        "checked_paths": list(checked_paths)
+        "checked_paths": list(paths)
     }
 
 

@@ -203,14 +203,14 @@ class FileTreeView(QWidget):
         self.model._checked_files.clear()
         
         # Reset all states first to ensure a clean slate
-        for node in self.model.path_map.values():
+        for node in self.model.path_to_node.values():
             node.check_state = Qt.CheckState.Unchecked
 
         # Set the specified file paths to checked
         nodes_to_update_parents_for = []
         for path in paths:
-            if path in self.model.path_map:
-                node = self.model.path_map[path]
+            if path in self.model.path_to_node:
+                node = self.model.path_to_node[path]
                 if not node.is_dir:
                     node.check_state = Qt.CheckState.Checked
                     # Update cached checked files set
@@ -225,20 +225,6 @@ class FileTreeView(QWidget):
 
         # Emit a layout changed signal to refresh the entire view at once
         self.model.layoutChanged.emit()
-        
-        # Navigate through model indices
-        current_index = self.model.index(0, 0)  # Start at project root
-        for i, node in enumerate(path_nodes[1:], 1):  # Skip project root
-            # Find child index
-            for row in range(self.model.rowCount(current_index)):
-                child_index = self.model.index(row, 0, current_index)
-                if child_index.internalPointer() == node:
-                    current_index = child_index
-                    break
-            else:
-                return QModelIndex()  # Not found
-                
-        return current_index
         
     def expand_to_depth(self, depth: int):
         """Expand tree to specified depth."""

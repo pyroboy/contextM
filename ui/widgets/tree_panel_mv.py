@@ -80,6 +80,12 @@ class TreePanelMV(QWidget):
         # Expand root level
         self.file_tree_view.expand_to_depth(0)
         
+        # Restore pending paths after tree is fully populated
+        if self._pending_restore_paths:
+            self.set_checked_paths(self._pending_restore_paths)
+            # Clear pending paths after restoration
+            self._pending_restore_paths = set()
+        
     def _normalize_path_for_cache(self, path: str) -> str:
         """Normalize path for consistent cache lookup."""
         try:

@@ -1,3 +1,3 @@
 {
-    "Default": "Instructions for the output format:\nOutput code without descriptions, unless it is important.\nMinimize prose, comments and empty lines."
+    "Default": "Instructions for the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines."
 }

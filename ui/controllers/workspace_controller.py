@@ -77,6 +77,9 @@ class WorkspaceController(QObject):
         workspace_manager.save_workspaces(self.mw.workspaces, base_path=self.mw.testing_path)
         print(f"[WORKSPACE] ✅ Created workspace '{workspace_name}' with settings from '{self.mw.current_workspace_name}'")
         
+        # Show status bar message
+        self.mw.statusBar().showMessage(f"Workspace '{workspace_name}' created.", 3000)
+        
         # Emit signal
         self.workspace_created.emit(workspace_name)
         
@@ -95,4 +98,8 @@ class WorkspaceController(QObject):
                 self.switch("Default")
             
             workspace_manager.save_workspaces(self.mw.workspaces, base_path=self.mw.testing_path)
+            
+            # Show status bar message
+            self.mw.statusBar().showMessage(f"Workspace '{workspace_name}' deleted.", 3000)
+            
             self.workspace_deleted.emit(workspace_name)

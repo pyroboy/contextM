@@ -2,7 +2,7 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTextEdit, QPushButton,
-    QLabel, QDialogButtonBox, QScrollArea, QWidget, QMessageBox, QSizePolicy
+    QLabel, QDialogButtonBox, QScrollArea, QWidget, QMessageBox, QSizePolicy, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, Slot
 

@@ -25,7 +25,7 @@
                     "venv"
                 ]
             },
-            "instructions": "",
+            "instructions": "Instructions sadasdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
             "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
@@ -54,7 +54,9 @@
                     "node_modules",
                     "obj",
                     "out",
-                    "target"
+                    "target",
+                    "venv",
+                    "workspaces.json"
                 ]
             },
             "instructions": "",
@@ -68,5 +70,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "63fc8877c0ffd95be96e26bd5f82300e87f65e2603e3c3f6f35ec9a10979b598"
+    "checksum": "582f386c9e04ff436cefd55c054a6523a675d10cd20d9e4a18b19a468250f751"
 }
