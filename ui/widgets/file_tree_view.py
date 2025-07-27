@@ -209,13 +209,26 @@ class FileTreeView(QWidget):
         # Set the specified file paths to checked
         nodes_to_update_parents_for = []
         for path in paths:
+            node = None
+            
+            # Fix #3: Case-Insensitive Path Matching for Windows
             if path in self.model.path_to_node:
                 node = self.model.path_to_node[path]
-                if not node.is_dir:
-                    node.check_state = Qt.CheckState.Checked
-                    # Update cached checked files set
-                    self.model._checked_files.add(path)
-                    nodes_to_update_parents_for.append(node)
+            elif os.name == 'nt':  # Windows - try case-insensitive matching
+                # Normalize path for case-insensitive comparison on Windows
+                normalized_path = os.path.normcase(path)
+                for stored_path, stored_node in self.model.path_to_node.items():
+                    if os.path.normcase(stored_path) == normalized_path:
+                        node = stored_node
+                        print(f"[SELECT] 🔍 Case-insensitive match: '{path}' -> '{stored_path}'")
+                        break
+            
+            if node and not node.is_dir:
+                node.check_state = Qt.CheckState.Checked
+                # Update cached checked files set with original stored path
+                actual_path = node.path  # Use the actual stored path
+                self.model._checked_files.add(actual_path)
+                nodes_to_update_parents_for.append(node)
 
         # Update all parent states from the bottom up, starting from the parents of the changed nodes
         # This is more efficient than iterating through all paths again

@@ -2,7 +2,7 @@
     "schema_version": 1,
     "workspaces": {
         "Default": {
-            "folder_path": "C:/Users/jezka/AZPOS",
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
             "scan_settings": {
                 "include_subfolders": true,
                 "live_watcher": true,
@@ -31,12 +31,7 @@
             "selection_groups": {
                 "Default": {
                     "description": "",
-                    "checked_paths": [
-                        ".env",
-                        ".gitignore",
-                        ".npmrc",
-                        ".prettierignore"
-                    ]
+                    "checked_paths": []
                 }
             }
         },
@@ -70,11 +65,13 @@
             "selection_groups": {
                 "Default": {
                     "description": "",
-                    "checked_paths": []
+                    "checked_paths": [
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
+                    ]
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "c0958ee2b3f723799e4ed99ae9ad1311515d258f11568436cbbc2c8a4656f9d7"
+    "checksum": "fbf8753477936b48ed67aa7fdd73de1cb6eb1e37adce0831c1b2a75162bf66b5"
 }

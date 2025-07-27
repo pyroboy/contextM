@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
         print(f"[WORKSPACE_SWITCH] ✅ Default workspace created with complete structure")
     
     def _load_workspace_data(self, workspace_name):
-        """Load and validate complete workspace data."""
+        """Load and validate complete workspace data with selection restoration."""
         try:
             workspace_data = self.workspaces.get('workspaces', {}).get(workspace_name, {})
             
@@ -405,10 +405,49 @@ class MainWindow(QMainWindow):
                 })
             }
             
-            print(f"[WORKSPACE_SWITCH] ✅ Workspace data loaded and validated for '{workspace_name}'")
+            # Load and validate selection groups using selection manager
+            self.selection_groups = selection_manager.load_groups(workspace_data)
+            
+            # Fix #1: Path Normalization at Data Boundary
+            # Normalize all stored paths to lowercase with forward slashes for Windows compatibility
+            print(f"[LOAD] 🔧 Normalizing paths for workspace: {workspace_name}")
+            normalized_count = 0
+            for group_name, group_data in self.selection_groups.items():
+                if isinstance(group_data, dict) and "checked_paths" in group_data:
+                    original_paths = group_data["checked_paths"]
+                    normalized_paths = []
+                    for path in original_paths:
+                        # Normalize to lowercase with forward slashes for consistent matching
+                        normalized_path = os.path.normpath(path).replace('\\', '/').lower()
+                        normalized_paths.append(normalized_path)
+                        normalized_count += 1
+                    group_data["checked_paths"] = normalized_paths
+            
+            if normalized_count > 0:
+                print(f"[NORMALIZE] ✅ Converted {normalized_count} paths to normalized format")
+            
+            # Determine active group (fallback to Default if needed)
+            active_group = validated_data["active_selection_group"]
+            if active_group not in self.selection_groups:
+                active_group = "Default"
+                validated_data["active_selection_group"] = "Default"
+            
+            # Apply to UI state
+            self.active_selection_group = active_group
+            
+            print(f"[WORKSPACE_SWITCH] 📦 Loading workspace: {workspace_name}")
             print(f"[WORKSPACE_SWITCH] 📁 Folder: {validated_data['folder_path']}")
             print(f"[WORKSPACE_SWITCH] ⚙️ Scan settings: {validated_data['scan_settings']}")
+            print(f"[WORKSPACE_SWITCH]   → Active group: {active_group}")
             
+            # Get group paths for logging
+            if active_group in self.selection_groups:
+                group_paths = self.selection_groups[active_group].get("checked_paths", [])
+                print(f"[WORKSPACE_SWITCH]   → Group paths count: {len(group_paths)}")
+                if group_paths:
+                    print(f"[WORKSPACE_SWITCH]   → First 3 paths: {group_paths[:3]}")
+            
+            print(f"[WORKSPACE_SWITCH] ✅ Workspace data loaded and validated for '{workspace_name}'")
             return validated_data
             
         except Exception as e:
@@ -433,10 +472,16 @@ class MainWindow(QMainWindow):
             # Apply instructions
             self.instructions_panel.set_text(workspace_data["instructions"])
             
-            # Apply selection groups
-            self.selection_groups = selection_manager.load_groups(workspace_data)
-            self.active_selection_group = workspace_data["active_selection_group"]
+            # Apply selection groups (already loaded in _load_workspace_data)
+            # Update selection manager panel with current groups
             self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
+            
+            # Restore file selections immediately if tree is already populated
+            if hasattr(self, 'tree_panel') and self.current_folder_path:
+                group_paths = self.selection_groups.get(self.active_selection_group, {}).get("checked_paths", [])
+                if group_paths:
+                    print(f"[WORKSPACE_SWITCH] 🔄 Restoring {len(group_paths)} file selections for group '{self.active_selection_group}'")
+                    self.tree_panel.set_checked_paths(group_paths, relative=False)
             
             # Trigger workspace switched callback
             self._on_workspace_switched(workspace_name)
@@ -769,19 +814,31 @@ class MainWindow(QMainWindow):
 
         # Save all current state
         current_ws["folder_path"] = self.current_folder_path
-        current_ws["scan_settings"] = self.current_scan_settings
+        current_ws["scan_settings"] = ensure_complete_scan_settings(self.current_scan_settings)
         current_ws["instructions"] = self.instructions_panel.get_text()
         current_ws['active_selection_group'] = self.active_selection_group
         
-        # Get checked paths from tree
-        checked_paths = self.tree_panel.get_checked_paths(relative=True)
-        current_ws['selection_groups'] = self.selection_groups
+        # Get absolute paths from tree (for UI consistency)
+        absolute_paths = self.tree_panel.get_checked_paths(relative=False)
         
-        # Update active selection group with current checked paths
+        # Update the active selection group with current checked paths using selection manager
         if self.active_selection_group in self.selection_groups:
-            self.selection_groups[self.active_selection_group]["checked_paths"] = checked_paths
+            # Get existing description
+            description = self.selection_groups[self.active_selection_group].get("description", "")
+            
+            # Use selection manager to save with proper path conversion
+            from core import selection_manager
+            selection_manager.save_group(current_ws, self.active_selection_group, description, absolute_paths)
+            
+            # Update local selection groups cache
+            self.selection_groups = selection_manager.load_groups(current_ws)
         
-        print(f"[STATE] ✅ Workspace state updated: {len(checked_paths)} checked files")
+        print(f"[STATE] 📦 Workspace state update for {self.current_workspace_name}:")
+        print(f"[STATE]   → Active group: {self.active_selection_group}")
+        print(f"[STATE]   → Checked paths count: {len(absolute_paths)}")
+        if absolute_paths:
+            print(f"[STATE]   → First 3 paths: {list(absolute_paths)[:3]}")
+        print(f"[STATE] ✅ Workspace state updated with {len(absolute_paths)} checked files")
 
     def _save_current_workspace_state(self):
         """Save workspace state with debug logging."""

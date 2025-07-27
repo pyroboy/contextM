@@ -2,7 +2,7 @@
     "schema_version": 1,
     "workspaces": {
         "Default": {
-            "folder_path": "C:/Users/jezka/AZPOS",
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
             "scan_settings": {
                 "include_subfolders": true,
                 "live_watcher": true,
@@ -27,15 +27,23 @@
                 ]
             },
             "instructions": "Instructions sadareetwertsgdfgsdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
-            "active_selection_group": "Default",
+            "active_selection_group": "New Group",
             "selection_groups": {
                 "Default": {
                     "description": "",
                     "checked_paths": [
-                        ".env",
-                        ".gitignore",
-                        ".npmrc",
-                        ".prettierignore"
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v1.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v2.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json"
+                    ]
+                },
+                "New Group": {
+                    "description": "",
+                    "checked_paths": [
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
                     ]
                 }
             }
@@ -71,13 +79,12 @@
                 "Default": {
                     "description": "",
                     "checked_paths": [
-                        "DIRTY_STATE_TRACKING.md",
-                        "Format__I_LIKE.md"
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
                     ]
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "8249bf92d5ac29a67cca2f18f9dda463d4f91a892aa8f3ac58437bdd0faa6839"
+    "checksum": "a32351e4d0ccc29b9fe3888706fc028917e443e6c8dac85f1054d8a8638fd674"
 }

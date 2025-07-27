@@ -2,7 +2,7 @@
     "schema_version": 1,
     "workspaces": {
         "Default": {
-            "folder_path": "C:/Users/jezka/AZPOS",
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
             "scan_settings": {
                 "include_subfolders": true,
                 "live_watcher": true,
@@ -32,9 +32,10 @@
                 "Default": {
                     "description": "",
                     "checked_paths": [
-                        ".env",
-                        ".gitignore",
-                        ".npmrc"
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v1.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v2.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json"
                     ]
                 }
             }
@@ -70,13 +71,12 @@
                 "Default": {
                     "description": "",
                     "checked_paths": [
-                        "DIRTY_STATE_TRACKING.md",
-                        "Format__I_LIKE.md"
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
                     ]
                 }
             }
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "2e7f982ee1cfa6c7a75d0e82c894d01601785eb975ae2759b104e2e37465712c"
+    "checksum": "6c67fd33265c59a321c9e9b1dafe76751780ad17f1daaec9a9c5c45641ecd907"
 }

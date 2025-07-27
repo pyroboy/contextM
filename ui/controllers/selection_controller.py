@@ -110,7 +110,7 @@ class SelectionController(QObject):
         while name in self.mw.selection_groups:
             name = f"New Group {counter}"
             counter += 1
-        ws = self.mw.workspaces[self.mw.current_workspace_name]
+        ws = self.mw.workspaces['workspaces'][self.mw.current_workspace_name]
         selection_manager.save_group(ws, name, "", set())
         self.mw.selection_manager_panel.update_groups(list(self.mw.selection_groups.keys()), name)
 

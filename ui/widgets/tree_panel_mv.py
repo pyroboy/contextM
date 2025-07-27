@@ -5,7 +5,7 @@ This provides a drop-in replacement for the existing TreePanel with dramatically
 
 import os
 import time
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Union
 from PySide6.QtCore import QTimer, Qt, Signal, QModelIndex
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
@@ -80,11 +80,22 @@ class TreePanelMV(QWidget):
         # Expand root level
         self.file_tree_view.expand_to_depth(0)
         
+        # Fix #2: Selection Timing Correction - finalize tree population
+        self._finalize_tree_population()
+        
+    def _finalize_tree_population(self):
+        """Fix #2: Complete tree population with proper selection restoration timing."""
+        print(f"[TREE] 🎯 Tree population complete - applying pending selections")
+        
         # Restore pending paths after tree is fully populated
         if self._pending_restore_paths:
+            print(f"[SELECT] 🔄 Restoring {len(self._pending_restore_paths)} pending paths")
             self.set_checked_paths(self._pending_restore_paths)
+            print(f"[SELECT] ✅ Selection restoration completed")
             # Clear pending paths after restoration
             self._pending_restore_paths = set()
+        else:
+            print(f"[SELECT] ℹ️ No pending paths to restore")
         
     def _normalize_path_for_cache(self, path: str) -> str:
         """Normalize path for consistent cache lookup."""
@@ -144,9 +155,35 @@ class TreePanelMV(QWidget):
             
         return set(checked_paths) if return_set else checked_paths
         
-    def set_checked_paths(self, paths: Set[str]):
-        """Set checked state for given paths."""
-        self.file_tree_view.set_checked_paths(paths)
+    def set_checked_paths(self, paths: Union[List[str], Set[str]], relative: bool = False):
+        """Set checked paths in the tree, converting to absolute if needed.
+        
+        Args:
+            paths: List or set of file paths to check
+            relative: If True, paths are relative to workspace root and need conversion
+        """
+        if not paths:
+            return
+            
+        # Convert to absolute paths if needed
+        absolute_paths = set()
+        if relative and self.root_path:
+            for rel_path in paths:
+                try:
+                    abs_path = os.path.normpath(os.path.join(self.root_path, rel_path))
+                    absolute_paths.add(abs_path)
+                except Exception:
+                    # Fallback to original path if conversion fails
+                    absolute_paths.add(rel_path)
+        else:
+            absolute_paths = set(os.path.normpath(p) for p in paths)
+        
+        # Update model with absolute paths
+        self.file_tree_view.set_checked_paths(absolute_paths)
+        
+        # Expand tree to show selected paths
+        if hasattr(self.file_tree_view, 'expand_to_paths'):
+            self.file_tree_view.expand_to_paths(absolute_paths)
         
     def set_pending_restore_paths(self, paths):
         """Set pending restore paths (compatibility method)."""
