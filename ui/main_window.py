@@ -913,14 +913,17 @@ class MainWindow(QMainWindow):
             return "Error generating file tree"
 
     def _get_aggregated_content(self, checked_paths):
-        """Get aggregated content from checked file paths using cached token counts."""
+        """Get aggregated content from checked file paths using cached token counts and optimized I/O."""
         if not checked_paths or not self.current_folder_path:
             return "", 0
         
         aggregated_parts = []
         total_tokens = 0
+        files_processed = 0
         
         try:
+            print(f"[AGGREGATION] 🚀 Processing {len(checked_paths)} files with optimized I/O...")
+            
             # Process files in consistent order
             for relative_path in sorted(checked_paths):
                 absolute_path = os.path.join(self.current_folder_path, relative_path)
@@ -929,11 +932,15 @@ class MainWindow(QMainWindow):
                     continue
                 
                 try:
+                    # Get cached token count first (fast operation)
+                    token_count = self._get_cached_token_count(absolute_path)
+                    total_tokens += token_count
+                    
                     # Get file extension for language
                     _, ext = os.path.splitext(relative_path)
                     language = ext[1:] if ext else ""
                     
-                    # Read file content
+                    # Read file content (this is the expensive operation)
                     with open(absolute_path, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
                     
@@ -943,16 +950,17 @@ class MainWindow(QMainWindow):
                     aggregated_parts.append(content)
                     aggregated_parts.append("```\n")
                     
-                    # Use cached token count from tree model for consistency
-                    token_count = self._get_cached_token_count(absolute_path)
-                    total_tokens += token_count
+                    files_processed += 1
                     
-                    print(f"[AGGREGATION] 📊 {relative_path}: {token_count} tokens (cached)")
+                    # Only log every 10th file to reduce console spam
+                    if files_processed % 10 == 0 or files_processed == len(checked_paths):
+                        print(f"[AGGREGATION] 📊 Processed {files_processed}/{len(checked_paths)} files, {total_tokens} tokens")
                     
                 except Exception as e:
                     aggregated_parts.append(f"[Error reading {relative_path}: {e}]\n")
                     print(f"[AGGREGATION] ⚠️ Error reading {relative_path}: {e}")
             
+            print(f"[AGGREGATION] ✅ Completed: {files_processed} files, {total_tokens} tokens (using cached counts)")
             return "\n".join(aggregated_parts), total_tokens
             
         except Exception as e:

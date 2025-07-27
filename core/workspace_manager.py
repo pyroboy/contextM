@@ -320,22 +320,43 @@ def save_workspaces(workspaces, base_path=None):
 
 
 def load_custom_instructions(base_path=None):
-    """Loads custom instruction templates from JSON file."""
+    """Loads custom instruction templates from JSON file.
+    
+    Ensures that a 'Default' template always exists, even if the file
+    exists but is empty or missing the Default key.
+    """
     instructions_file = _get_instructions_file_path(base_path)
+    default_template = "Instructions for the output format:\nOutput code without descriptions, unless it is important.\nMinimize prose, comments and empty lines."
+    
     try:
         if instructions_file.exists():
             with open(instructions_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                loaded_instructions = json.load(f)
+                
+            # Handle case where file exists but is empty or not a dict
+            if not isinstance(loaded_instructions, dict):
+                print("Custom instructions file exists but contains invalid data. Creating default.")
+                loaded_instructions = {}
+            
+            # Ensure 'Default' template always exists
+            if not loaded_instructions or "Default" not in loaded_instructions:
+                print("Custom instructions file missing 'Default' template. Adding it.")
+                loaded_instructions["Default"] = default_template
+                # Save the updated instructions to persist the Default template
+                save_custom_instructions(loaded_instructions, base_path)
+            
+            return loaded_instructions
         else:
             print("Custom instructions file not found. Creating default.")
             default_instructions = {
-                "Default": "Instructions for the output format:\nOutput code without descriptions, unless it is important.\nMinimize prose, comments and empty lines."
+                "Default": default_template
             }
-            save_custom_instructions(default_instructions)
+            save_custom_instructions(default_instructions, base_path)
             return default_instructions
+            
     except (json.JSONDecodeError, IOError, TypeError) as e:
         print(f"Error loading custom instructions: {e}. Using default.")
-        return { "Default": "Default instructions." }
+        return {"Default": default_template}
 
 def save_custom_instructions(instructions, base_path=None):
     """Saves custom instruction templates to JSON file."""
