@@ -1,0 +1,77 @@
+{
+    "schema_version": 1,
+    "workspaces": {
+        "Default": {
+            "folder_path": "C:/Users/jezka/AZPOS",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target",
+                    "venv"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": [
+                        "src\\hooks.server.ts",
+                        "src\\app.d.ts",
+                        "src\\app.css",
+                        "src\\app.html"
+                    ]
+                }
+            }
+        },
+        "Rat": {
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": []
+                }
+            }
+        }
+    },
+    "last_active_workspace": "Default",
+    "checksum": "e1f44ef4eef66aa72a13d296142c0ce9a94780fda1d10427e0bc41ca95419805"
+}

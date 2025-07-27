@@ -68,11 +68,57 @@ class TreePanelMV(QWidget):
         # Store root path
         self.root_path = os.path.normpath(root_path).replace('\\', '/')
         
+        # Initialize token cache for direct path-to-token mapping
+        self._token_cache = {}
+        
+        # Build token cache during population for efficient lookups
+        self._build_token_cache(items, root_path)
+        
         # Populate using Model/View (this is FAST!)
         self.file_tree_view.populate_tree(items, root_path)
         
         # Expand root level
         self.file_tree_view.expand_to_depth(0)
+        
+    def _normalize_path_for_cache(self, path: str) -> str:
+        """Normalize path for consistent cache lookup."""
+        try:
+            # Convert to absolute path and normalize
+            abs_path = os.path.abspath(path)
+            # Convert to forward slashes for consistent storage/retrieval
+            normalized = abs_path.replace('\\', '/')
+            return normalized
+        except Exception:
+            return path.replace('\\', '/')
+    
+    def _build_token_cache(self, items: List, root_path: str):
+        """Build direct token cache from BG_scanner items for efficient lookups."""
+        try:
+            print(f"[TOKEN_CACHE] 🏗️ Building token cache for {len(items)} items")
+            cache_hits = 0
+            
+            for item in items:
+                if len(item) >= 5:  # Ensure item has token count
+                    path_str, is_dir, is_valid, reason, token_count = item[:5]
+                    
+                    if not is_dir and isinstance(token_count, int) and token_count > 0:
+                        # Create both absolute and relative path variants
+                        abs_path = os.path.join(root_path, path_str) if not os.path.isabs(path_str) else path_str
+                        normalized_path = self._normalize_path_for_cache(abs_path)
+                        
+                        # Store in cache with normalized path
+                        self._token_cache[normalized_path] = token_count
+                        cache_hits += 1
+            
+            print(f"[TOKEN_CACHE] ✅ Built token cache with {cache_hits} entries")
+            
+        except Exception as e:
+            print(f"[TOKEN_CACHE] ❌ Error building token cache: {e}")
+            self._token_cache = {}
+    
+    def get_token_cache(self) -> dict:
+        """Get the direct token cache for external access."""
+        return getattr(self, '_token_cache', {})
         
     def get_checked_paths(self, return_set: bool = False, relative: bool = False):
         """Get list or set of checked file paths."""
@@ -145,6 +191,34 @@ class TreePanelMV(QWidget):
     def get_selected_token_count(self) -> int:
         """Get total token count for selected/checked items."""
         return self.file_tree_view.get_selected_token_count()
+        
+    def get_checked_paths(self, relative: bool = False) -> List[str]:
+        """Get list of checked file paths.
+        
+        Args:
+            relative: If True, return paths relative to root_path
+                     If False, return absolute paths
+        
+        Returns:
+            List of checked file paths
+        """
+        # Delegate to the model's get_checked_paths method
+        checked_paths = self.file_tree_view.model.get_checked_paths()
+        
+        if not relative or not self.root_path:
+            return checked_paths
+            
+        # Convert to relative paths
+        relative_paths = []
+        for path in checked_paths:
+            try:
+                rel_path = os.path.relpath(path, self.root_path)
+                relative_paths.append(rel_path)
+            except (ValueError, OSError):
+                # If relative path conversion fails, use the original path
+                relative_paths.append(path)
+                
+        return relative_paths
         
     def get_aggregated_content(self):
         """Aggregates content from checked files using the specified format."""

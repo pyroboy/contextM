@@ -1,6 +1,7 @@
 from PySide6.QtCore import QObject, Slot, Signal
 from PySide6.QtWidgets import QFileDialog, QDialog
 from dialogs.scan_config_dialog import ScanConfigDialog
+from core.workspace_manager import get_default_scan_settings
 
 class ScanController(QObject):
     folder_selected = Signal(str)
@@ -21,8 +22,10 @@ class ScanController(QObject):
 
         print(f"[SCAN_CTRL] 📡 Emitting folder_selected signal...")
         self.folder_selected.emit(folder)
-        print(f"[SCAN_CTRL] 🔧 Opening scan config dialog...")
-        dlg = ScanConfigDialog(folder, self.mw.current_scan_settings, self.mw)
+        print(f"[SCAN_CTRL] 🔧 Opening scan config dialog with fresh default settings...")
+        # Use fresh default settings for new folders, not current settings
+        default_settings = get_default_scan_settings()
+        dlg = ScanConfigDialog(folder, default_settings, self.mw)
         print(f"[SCAN_CTRL] 🔧 Executing scan config dialog...")
         if dlg.exec() == QDialog.DialogCode.Accepted:
             print(f"[SCAN_CTRL] ✅ Dialog accepted, starting scan...")

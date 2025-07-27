@@ -21,9 +21,42 @@ _TESTING_BASE_PATH = None
 
 # This was in scan_config_dialog.py, moved here to avoid core -> dialogs dependency
 DEFAULT_IGNORE_FOLDERS = [
-    ".git", "__pycache__", ".vscode", ".idea", "node_modules", "venv",
+    ".git", "__pycache__", ".vscode", ".idea", "node_modules", "venv", ".venv",
     ".svn", "dist", "build", "target", "out", "bin", "obj","csv" ,"json"
 ]
+
+def get_default_scan_settings():
+    """Get complete default scan settings structure."""
+    return {
+        "include_subfolders": True,
+        "ignore_folders": set(DEFAULT_IGNORE_FOLDERS),
+        "live_watcher": True
+    }
+
+def ensure_complete_scan_settings(scan_settings):
+    """Ensure scan_settings has all required fields with proper defaults."""
+    if not scan_settings or not isinstance(scan_settings, dict):
+        return get_default_scan_settings()
+    
+    defaults = get_default_scan_settings()
+    complete_settings = {}
+    
+    # Ensure all required fields exist with proper types
+    complete_settings["include_subfolders"] = scan_settings.get("include_subfolders", defaults["include_subfolders"])
+    complete_settings["live_watcher"] = scan_settings.get("live_watcher", defaults["live_watcher"])
+    
+    # Handle ignore_folders with proper type conversion
+    ignore_folders = scan_settings.get("ignore_folders")
+    if ignore_folders is None:
+        complete_settings["ignore_folders"] = defaults["ignore_folders"]
+    elif isinstance(ignore_folders, list):
+        complete_settings["ignore_folders"] = set(ignore_folders)
+    elif isinstance(ignore_folders, set):
+        complete_settings["ignore_folders"] = ignore_folders
+    else:
+        complete_settings["ignore_folders"] = defaults["ignore_folders"]
+    
+    return complete_settings
 
 def _migrate_workspaces(data):
     """Placeholder for migrating workspace data from old schemas."""
@@ -143,9 +176,14 @@ def load_workspaces(base_path=None):
     workspaces = {}
     for ws_name, ws_data in workspaces_data.items():
         checked_paths_list = ws_data.get("checked_paths", [])
+        
+        # Ensure complete scan_settings with proper validation
+        raw_scan_settings = ws_data.get("scan_settings")
+        complete_scan_settings = ensure_complete_scan_settings(raw_scan_settings)
+        
         validated_data = {
             "folder_path": ws_data.get("folder_path"),
-            "scan_settings": ws_data.get("scan_settings"),
+            "scan_settings": complete_scan_settings,
             "instructions": ws_data.get("instructions", ""),
             "checked_paths": checked_paths_list,
             "selection_groups": ws_data.get("selection_groups", {}),
@@ -153,11 +191,6 @@ def load_workspaces(base_path=None):
             "use_local_templates": ws_data.get("use_local_templates", False),
             "local_custom_instructions": ws_data.get("local_custom_instructions", {})
         }
-        if validated_data["scan_settings"] and "ignore_folders" in validated_data["scan_settings"]:
-            if isinstance(validated_data["scan_settings"]["ignore_folders"], list):
-                validated_data["scan_settings"]["ignore_folders"] = set(validated_data["scan_settings"]["ignore_folders"])
-            elif validated_data["scan_settings"]["ignore_folders"] is None:
-                validated_data["scan_settings"]["ignore_folders"] = set(DEFAULT_IGNORE_FOLDERS)
         workspaces[ws_name] = validated_data
     
     if last_active_workspace:
@@ -211,15 +244,35 @@ def save_workspaces(workspaces, base_path=None):
     # Clean data for serialization (convert sets to lists)
     last_active = workspaces_copy.get("last_active_workspace", None)
     clean_workspaces = {}
+    
     for ws_name, ws_data in workspaces_copy.get("workspaces", {}).items():
         if not isinstance(ws_data, dict):
             continue
-        if isinstance(ws_data.get("checked_paths"), set):
-            ws_data["checked_paths"] = sorted(list(ws_data["checked_paths"]))
-        scan_settings = ws_data.get("scan_settings")
-        if scan_settings and isinstance(scan_settings.get("ignore_folders"), set):
+            
+        # Ensure complete scan_settings with proper validation
+        raw_scan_settings = ws_data.get("scan_settings")
+        complete_scan_settings = ensure_complete_scan_settings(raw_scan_settings)
+        
+        # Convert sets to lists for JSON serialization
+        scan_settings = complete_scan_settings.copy()
+        if isinstance(scan_settings.get("ignore_folders"), set):
             scan_settings["ignore_folders"] = sorted(list(scan_settings["ignore_folders"]))
-        clean_workspaces[ws_name] = ws_data
+        
+        validated_data = {
+            "folder_path": ws_data.get("folder_path"),
+            "scan_settings": scan_settings,
+            "instructions": ws_data.get("instructions", ""),
+            "active_selection_group": ws_data.get("active_selection_group", "Default"),
+            "selection_groups": ws_data.get("selection_groups", {})
+        }
+        
+        # Ensure selection groups have proper structure
+        for group_name, group_data in validated_data.get("selection_groups", {}).items():
+            if isinstance(group_data, dict) and "checked_paths" in group_data:
+                if isinstance(group_data["checked_paths"], set):
+                    group_data["checked_paths"] = sorted(list(group_data["checked_paths"]))
+        
+        clean_workspaces[ws_name] = validated_data
 
     data_to_save = {
         "schema_version": 1,

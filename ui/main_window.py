@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Slot, QTimer, QFileSystemWatcher
 
 # Core components
 from core import workspace_manager, selection_manager
+from core.workspace_manager import get_default_scan_settings, ensure_complete_scan_settings
 from core.streamlined_scanner import StreamlinedScanner
 from core.watcher import FileWatcher
 from core.optimistic_loader import OptimisticLoader
@@ -90,12 +91,33 @@ class MainWindow(QMainWindow):
             print(f"[WINDOW] ✅ Workspace switch initiated")
 
     def load_initial_data(self):
-        """Loads workspaces and other initial data. Can be called manually in test mode."""
+        """Load workspaces with proper structure initialization."""
         self.workspaces = workspace_manager.load_workspaces(base_path=self.testing_path)
-        print(f"[DEBUG] Inside load_initial_data, after loading: {self.workspaces}")
-        if not self.workspaces or ("workspaces" not in self.workspaces or not self.workspaces["workspaces"]):
-            self.workspaces = {"workspaces": {"Default": {}}, "last_active_workspace": "Default"}
+        
+        # Ensure proper structure
+        if not isinstance(self.workspaces, dict):
+            self.workspaces = {'workspaces': {}, 'last_active_workspace': 'Default'}
+        
+        if 'workspaces' not in self.workspaces:
+            self.workspaces['workspaces'] = {}
+        
+        if 'last_active_workspace' not in self.workspaces:
+            self.workspaces['last_active_workspace'] = 'Default'
+        
+        # Always ensure Default workspace exists
+        if 'Default' not in self.workspaces['workspaces']:
+            self.workspaces['workspaces']['Default'] = {
+                "folder_path": None,
+                "scan_settings": get_default_scan_settings(),
+                "instructions": "",
+                "active_selection_group": "Default",
+                "selection_groups": {
+                    "Default": {"description": "Default selection", "checked_paths": []}
+                }
+            }
+        
         self.custom_instructions = workspace_manager.load_custom_instructions(base_path=self.testing_path)
+        print(f"[MAIN] 📁 Loaded {len(self.workspaces['workspaces'])} workspaces: {list(self.workspaces['workspaces'].keys())}")
 
     def _setup_ui(self):
         main_widget = QWidget()
@@ -139,9 +161,11 @@ class MainWindow(QMainWindow):
         # Connect signals (Model/View TreePanel uses same interface)
         if hasattr(self.tree_panel, 'item_checked_changed'):
             self.tree_panel.item_checked_changed.connect(self._on_tree_selection_changed)
+            self.tree_panel.item_checked_changed.connect(self.update_aggregation_and_tokens)
         else:
             # Model/View uses selection_changed signal
             self.tree_panel.selection_changed.connect(self._on_tree_selection_changed)
+            self.tree_panel.selection_changed.connect(self.update_aggregation_and_tokens)
         self.left_splitter.addWidget(self.selection_manager_panel)
         self.left_splitter.addWidget(self.tree_panel)
         self.left_splitter.setStretchFactor(0, 0)
@@ -186,6 +210,10 @@ class MainWindow(QMainWindow):
         self.select_folder_button.clicked.connect(self.scan_ctl.select_folder)
         self.scan_ctl.folder_selected.connect(self._update_path_display)
         self.refresh_button.clicked.connect(self.scan_ctl.refresh)
+
+        # Connect new workspace signals
+        self.workspace_ctl.workspace_created.connect(self._on_workspace_created)
+        self.workspace_ctl.workspace_deleted.connect(self._on_workspace_deleted)
 
         # Core components
         self.streamlined_scanner.scan_started.connect(lambda: self.tree_panel.show_loading(True))
@@ -251,16 +279,26 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _update_current_workspace_state(self):
-        if not self.current_workspace_name or self.current_workspace_name not in self.workspaces.get('workspaces', {}):
+        """Update current workspace state with complete data validation."""
+        if not self.current_workspace_name:
+            print("[STATE] ⚠️ No current workspace name set")
+            return
+            
+        # Clean workspace name (remove any display suffixes)
+        clean_workspace_name = self.current_workspace_name.split(' (')[0].strip()
+        
+        if clean_workspace_name not in self.workspaces.get('workspaces', {}):
+            print(f"[STATE] ⚠️ Cannot update state - invalid workspace: {self.current_workspace_name}")
             return
 
-        current_ws = self.workspaces['workspaces'][self.current_workspace_name]
+        current_ws = self.workspaces['workspaces'][clean_workspace_name]
         if not isinstance(current_ws, dict):
             current_ws = {}
-            self.workspaces['workspaces'][self.current_workspace_name] = current_ws
+            self.workspaces['workspaces'][clean_workspace_name] = current_ws
 
+        # Ensure complete scan_settings are always saved
         current_ws["folder_path"] = self.current_folder_path
-        current_ws["scan_settings"] = self.current_scan_settings
+        current_ws["scan_settings"] = ensure_complete_scan_settings(self.current_scan_settings)
         current_ws["instructions"] = self.instructions_panel.get_text()
         current_ws['active_selection_group'] = self.active_selection_group
 
@@ -269,74 +307,172 @@ class MainWindow(QMainWindow):
             if isinstance(self.selection_groups[self.active_selection_group], dict):
                 self.selection_groups[self.active_selection_group]["checked_paths"] = checked_paths
         current_ws['selection_groups'] = self.selection_groups
+        
+        print(f"[STATE] ✅ Updated workspace state: {clean_workspace_name}")
 
     def _save_current_workspace_state(self):
         if self.workspaces:
             workspace_manager.save_workspaces(self.workspaces)
 
     def _switch_workspace(self, workspace_name, initial_load=False):
-        print(f"[DEBUG][_switch_workspace] Initiating switch to workspace: '{workspace_name}'. Initial load: {initial_load}")
-
-        # This check is to create a brand new Default workspace if the JSON is empty or missing.
-        # It should only run if the workspace truly doesn't exist after loading.
-        if workspace_name == "Default" and not self.workspaces.get('workspaces', {}).get(workspace_name):
-            print("[DEBUG][_switch_workspace] 'Default' workspace not found. Creating a new one.")
-            if 'workspaces' not in self.workspaces:
-                print("[DEBUG][_switch_workspace] 'workspaces' key missing. Initializing.")
-                self.workspaces['workspaces'] = {}
-            self.workspaces['workspaces']['Default'] = {}
-            print(f"[DEBUG][_switch_workspace] New 'Default' workspace created. Current workspaces object: {self.workspaces}")
-
-        if not initial_load:
-            print(f"[DEBUG][_switch_workspace] Not initial load. Saving state for current workspace: '{self.current_workspace_name}'")
-            self._save_current_workspace_state()
-            print("[DEBUG][_switch_workspace] State saved.")
+        """Atomic workspace switch with complete data validation and error handling."""
+        print(f"[WORKSPACE_SWITCH] 🔄 Initiating atomic switch to: '{workspace_name}' (initial_load: {initial_load})")
+        
+        try:
+            # Phase 1: Pre-Switch State Capture
+            if not initial_load and self.current_workspace_name:
+                print(f"[WORKSPACE_SWITCH] 💾 Saving current workspace state: {self.current_workspace_name}")
+                self._update_current_workspace_state()
+                self._save_current_workspace_state()
+                print(f"[WORKSPACE_SWITCH] ✅ Current workspace state saved")
+            
+            # Phase 2: Workspace Data Validation
+            if not self._validate_workspace_exists(workspace_name):
+                if workspace_name == "Default":
+                    print(f"[WORKSPACE_SWITCH] 🏗️ Creating missing Default workspace")
+                    self._create_default_workspace()
+                else:
+                    print(f"[WORKSPACE_SWITCH] ❌ Workspace '{workspace_name}' does not exist")
+                    return False
+            
+            # Phase 3: Atomic Workspace Load
+            workspace_data = self._load_workspace_data(workspace_name)
+            if not workspace_data:
+                print(f"[WORKSPACE_SWITCH] ❌ Failed to load workspace data for '{workspace_name}'")
+                return False
+            
+            # Phase 4: Apply Workspace State (All-or-Nothing)
+            success = self._apply_workspace_state(workspace_name, workspace_data)
+            if not success:
+                print(f"[WORKSPACE_SWITCH] ❌ Failed to apply workspace state for '{workspace_name}'")
+                return False
+            
+            print(f"[WORKSPACE_SWITCH] ✅ Atomic workspace switch to '{workspace_name}' completed successfully")
+            return True
+            
+        except Exception as e:
+            print(f"[WORKSPACE_SWITCH] ❌ Error during workspace switch: {e}")
+            return False
+    
+    def _validate_workspace_exists(self, workspace_name):
+        """Validate that workspace exists and has proper structure."""
+        workspaces = self.workspaces.get('workspaces', {})
+        return workspace_name in workspaces
+    
+    def _create_default_workspace(self):
+        """Create Default workspace with proper structure."""
+        if 'workspaces' not in self.workspaces:
+            self.workspaces['workspaces'] = {}
+        
+        self.workspaces['workspaces']['Default'] = {
+            "folder_path": None,
+            "scan_settings": get_default_scan_settings(),
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {"description": "Default selection", "checked_paths": []}
+            }
+        }
+        print(f"[WORKSPACE_SWITCH] ✅ Default workspace created with complete structure")
+    
+    def _load_workspace_data(self, workspace_name):
+        """Load and validate complete workspace data."""
+        try:
+            workspace_data = self.workspaces.get('workspaces', {}).get(workspace_name, {})
+            
+            # Data integrity validation
+            validated_data = {
+                "folder_path": workspace_data.get("folder_path"),
+                "scan_settings": ensure_complete_scan_settings(workspace_data.get("scan_settings")),
+                "instructions": workspace_data.get("instructions", ""),
+                "active_selection_group": workspace_data.get("active_selection_group", "Default"),
+                "selection_groups": workspace_data.get("selection_groups", {
+                    "Default": {"description": "Default selection", "checked_paths": []}
+                })
+            }
+            
+            print(f"[WORKSPACE_SWITCH] ✅ Workspace data loaded and validated for '{workspace_name}'")
+            print(f"[WORKSPACE_SWITCH] 📁 Folder: {validated_data['folder_path']}")
+            print(f"[WORKSPACE_SWITCH] ⚙️ Scan settings: {validated_data['scan_settings']}")
+            
+            return validated_data
+            
+        except Exception as e:
+            print(f"[WORKSPACE_SWITCH] ❌ Error loading workspace data: {e}")
+            return None
+    
+    def _apply_workspace_state(self, workspace_name, workspace_data):
+        """Apply workspace state atomically with error handling."""
+        try:
+            # Set workspace identity
+            self.current_workspace_name = workspace_name
+            self.workspace_label.setText(f"Workspace: {workspace_name}")
+            
+            # Apply folder path and scan settings
+            self.current_folder_path = workspace_data["folder_path"]
+            self.current_scan_settings = workspace_data["scan_settings"]
+            
+            # Update path display
+            display_path = self.current_folder_path if self.current_folder_path else "No folder selected."
+            self._update_path_display(display_path)
+            
+            # Apply instructions
+            self.instructions_panel.set_text(workspace_data["instructions"])
+            
+            # Apply selection groups
+            self.selection_groups = selection_manager.load_groups(workspace_data)
+            self.active_selection_group = workspace_data["active_selection_group"]
+            self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
+            
+            # Trigger workspace switched callback
+            self._on_workspace_switched(workspace_name)
+            
+            # Handle folder scanning with validation
+            if self.current_folder_path and self.current_scan_settings:
+                if self._validate_folder_exists(self.current_folder_path):
+                    print(f"[WORKSPACE_SWITCH] 🚀 Starting scan for validated folder: {self.current_folder_path}")
+                    active_group_data = self.selection_groups.get(self.active_selection_group, {})
+                    checked_paths_to_restore = active_group_data.get("checked_paths", [])
+                    self.scan_ctl.start(self.current_folder_path, self.current_scan_settings, checked_paths_to_restore)
+                else:
+                    print(f"[WORKSPACE_SWITCH] ⚠️ Folder path does not exist: {self.current_folder_path}")
+                    self._handle_missing_folder()
+            else:
+                print(f"[WORKSPACE_SWITCH] ℹ️ No folder or scan settings - workspace ready for folder selection")
+            
+            return True
+            
+        except Exception as e:
+            print(f"[WORKSPACE_SWITCH] ❌ Error applying workspace state: {e}")
+            return False
+    
+    def _validate_folder_exists(self, folder_path):
+        """Validate that the assigned folder path exists."""
+        if not folder_path:
+            return False
+        import os
+        return os.path.exists(folder_path) and os.path.isdir(folder_path)
+    
+    def _handle_missing_folder(self):
+        """Handle case where workspace folder doesn't exist."""
+        from PySide6.QtWidgets import QMessageBox
+        
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Folder Not Found")
+        msg.setText(f"The folder assigned to this workspace no longer exists:\n\n{self.current_folder_path}")
+        msg.setInformativeText("Would you like to select a new folder for this workspace?")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            # Clear current folder and let user select new one
+            self.current_folder_path = None
+            self._update_path_display("No folder selected.")
+            print(f"[WORKSPACE_SWITCH] 🔄 User will select new folder for workspace")
         else:
-            print("[DEBUG][_switch_workspace] Initial load detected. Skipping state save.")
-
-        print(f"--- Switching to workspace: {workspace_name} ---")
-        self.current_workspace_name = workspace_name
-        self.workspace_label.setText(f"Workspace: {workspace_name}")
-        print(f"[DEBUG][_switch_workspace] Set current_workspace_name to: '{self.current_workspace_name}'")
-
-
-        print(f"[DEBUG][_switch_workspace] Attempting to retrieve data for workspace '{workspace_name}' from self.workspaces")
-        current_ws = self.workspaces.get('workspaces', {}).get(workspace_name, {})
-        print(f"[DEBUG][_switch_workspace] Loaded workspace data: {current_ws}")
-
-        self.current_folder_path = current_ws.get("folder_path")
-        self.current_scan_settings = current_ws.get("scan_settings")
-        print(f"[DEBUG][_switch_workspace] Extracted folder path: {self.current_folder_path}")
-        print(f"[DEBUG][_switch_workspace] Extracted scan settings: {self.current_scan_settings}")
-
-        self._update_path_display(self.current_folder_path if self.current_folder_path else "No folder selected.")
-        print(f"[DEBUG][_switch_workspace] Updated path display.")
-
-        self._on_workspace_switched(workspace_name)
-        print(f"[DEBUG][_switch_workspace] Executed _on_workspace_switched callback.")
-
-        if self.current_folder_path and self.current_scan_settings:
-            print(f"[DEBUG][_switch_workspace] Folder path and scan settings found. Starting scan for: {self.current_folder_path}")
-            active_group_data = self.selection_groups.get(self.active_selection_group, {})
-            checked_paths_to_restore = active_group_data.get("checked_paths", [])
-            self.scan_ctl.start(self.current_folder_path, self.current_scan_settings, checked_paths_to_restore)
-        else:
-            print("[DEBUG][_switch_workspace] Not starting scan. Folder path, scan settings, or both are missing.")
-            print(f"[DEBUG][_switch_workspace] -> Has folder path: {bool(self.current_folder_path)}")
-            print(f"[DEBUG][_switch_workspace] -> Has scan settings: {bool(self.current_scan_settings)}")
-
-        instructions_text = current_ws.get("instructions", "")
-        self.instructions_panel.set_text(instructions_text)
-        print(f"[DEBUG][_switch_workspace] Set instructions text. Length: {len(instructions_text)}")
-
-
-        print("[DEBUG][_switch_workspace] Loading selection groups from workspace data.")
-        self.selection_groups = selection_manager.load_groups(current_ws)
-        self.active_selection_group = current_ws.get("active_selection_group", "Default")
-        self.selection_manager_panel.update_groups(list(self.selection_groups.keys()), self.active_selection_group)
-        print(f"[DEBUG][_switch_workspace] Loaded {len(self.selection_groups)} selection groups. Active group: '{self.active_selection_group}'")
-
-        print(f"[DEBUG][_switch_workspace] Workspace switch to '{workspace_name}' complete. ✅")
+            # Keep the invalid path but don't scan
+            print(f"[WORKSPACE_SWITCH] ⚠️ Keeping invalid folder path - no scanning will occur")
     @Slot(str)
     def _on_instructions_changed(self):
         self._update_current_workspace_state()
@@ -477,142 +613,9 @@ class MainWindow(QMainWindow):
             self.file_watcher = None
             self.watcher_indicator.setVisible(False)
     
-    def start_isolated_background_scan(self, folder_path: str, scan_settings: dict):
-        """Start completely isolated background scan that never blocks the main window."""
-        print(f"[WINDOW] 🚀 Starting isolated background scan for: {folder_path}")
-        print(f"[WINDOW] 🔒 Main window will remain completely responsive during scan")
-        
-        # Lazy initialization - create isolated scanner only when needed
-        if self.isolated_scanner is None:
-            print(f"[WINDOW] 🏗️ Creating isolated scanner (lazy initialization)...")
-            from core.isolated_background_scanner import IsolatedBackgroundScanner
-            self.isolated_scanner = IsolatedBackgroundScanner()
-            self.isolated_scanner_timer = QTimer()
-            self.isolated_scanner_timer.timeout.connect(self._check_isolated_scanner_updates)
-            print(f"[WINDOW] ✅ Isolated scanner created successfully")
-        
-        # Stop any existing isolated scan
-        self.stop_isolated_background_scan()
-        
-        # Start the isolated background process
-        success = self.isolated_scanner.start_scan(folder_path, scan_settings)
-        
-        if success:
-            print(f"[WINDOW] ✅ Isolated background scan started successfully")
-            # Start timer to check for updates every 500ms (non-blocking)
-            self.isolated_scanner_timer.start(500)
-            print(f"[WINDOW] ⏰ Update timer started (500ms intervals)")
-            
-            # Show loading state in UI
-            self.tree_panel.show_loading(True)
-        else:
-            print(f"[WINDOW] ❌ Failed to start isolated background scan")
+
     
-    def stop_isolated_background_scan(self):
-        """Stop the isolated background scan."""
-        print(f"[WINDOW] 🛑 Stopping isolated background scan...")
-        
-        # Stop the timer (only if it exists)
-        if self.isolated_scanner_timer and self.isolated_scanner_timer.isActive():
-            self.isolated_scanner_timer.stop()
-            print(f"[WINDOW] ⏰ Update timer stopped")
-        
-        # Stop the isolated scanner (only if it exists)
-        if self.isolated_scanner:
-            self.isolated_scanner.stop_scan()
-            print(f"[WINDOW] ✅ Isolated background scan stopped")
-        else:
-            print(f"[WINDOW] ℹ️ No isolated scanner to stop (not yet created)")
-    
-    def _check_isolated_scanner_updates(self):
-        """Check for updates from isolated background scanner (called by timer)."""
-        # This method is called every 500ms by the timer
-        # It's designed to be very lightweight and non-blocking
-        
-        # Safety check - if scanner doesn't exist, stop the timer
-        if not self.isolated_scanner:
-            print(f"[WINDOW] ⚠️ Timer running but no isolated scanner exists, stopping timer")
-            if self.isolated_scanner_timer:
-                self.isolated_scanner_timer.stop()
-            return
-        
-        if not self.isolated_scanner.is_scan_running():
-            # Scan finished, stop the timer
-            print(f"[WINDOW] 🏁 Isolated scan completed, stopping timer")
-            self.isolated_scanner_timer.stop()
-            return
-        
-        # Check for updates (non-blocking)
-        update = self.isolated_scanner.get_updates()
-        
-        if update:
-            update_type = update.get('type')
-            print(f"[WINDOW] 📥 Received isolated scanner update: {update_type}")
-            
-            if update_type == 'structure_complete':
-                # Initial structure is ready - show it immediately
-                items = update.get('items', [])
-                files_to_tokenize = update.get('files_to_tokenize', 0)
-                
-                print(f"[WINDOW] 🏗️ Structure complete: {len(items)} items, {files_to_tokenize} files to tokenize")
-                
-                # Update UI with structure (this is fast and non-blocking)
-                scan_results = {
-                    'items': items,
-                    'total_files': len([item for item in items if not item[1]]),  # Count files
-                    'total_dirs': len([item for item in items if item[1]]),       # Count directories
-                    'errors': []
-                }
-                
-                # Update tree panel with initial structure
-                self.tree_panel.populate_tree(items, self.current_folder_path)
-                print(f"[WINDOW] ✅ UI updated with initial structure")
-                
-                # Show progress message
-                if files_to_tokenize > 0:
-                    self.tree_panel.show_loading(True)
-                else:
-                    self.tree_panel.show_loading(False)
-            
-            elif update_type == 'progress_update':
-                # Progress update - just update the loading message
-                completed = update.get('completed', 0)
-                total = update.get('total', 0)
-                
-                if total > 0:
-                    progress_percent = (completed / total) * 100
-                    self.tree_panel.show_loading(True)  # Show loading during progress
-                    print(f"[WINDOW] 📊 Progress: {completed}/{total} ({progress_percent:.1f}%)")
-            
-            elif update_type == 'scan_complete':
-                # Final results available
-                items = update.get('items', [])
-                completed_files = update.get('completed_files', 0)
-                total_files = update.get('total_files', 0)
-                
-                print(f"[WINDOW] 🎉 Scan complete: {len(items)} items, {completed_files}/{total_files} files tokenized")
-                
-                # Update UI with final results
-                scan_results = {
-                    'items': items,
-                    'total_files': len([item for item in items if not item[1]]),
-                    'total_dirs': len([item for item in items if item[1]]),
-                    'errors': []
-                }
-                
-                self.tree_panel.populate_tree(items, self.current_folder_path)
-                self.tree_panel.show_loading(False)
-                
-                # Stop the timer since we're done
-                self.isolated_scanner_timer.stop()
-                print(f"[WINDOW] ✅ All updates complete, timer stopped")
-            
-            elif update_type == 'error':
-                # Handle errors
-                error = update.get('error', 'Unknown error')
-                print(f"[WINDOW] ❌ Isolated scanner error: {error}")
-                self.tree_panel.show_loading(False)  # Hide loading on error
-                self.isolated_scanner_timer.stop()
+
 
     def update_aggregation_and_tokens(self):
         from .helpers.aggregation_helper import generate_file_tree_string
@@ -719,13 +722,6 @@ class MainWindow(QMainWindow):
                 import traceback
                 traceback.print_exc()
         
-        # Stop isolated background scanner
-        try:
-            self.stop_isolated_background_scan()
-            print(f"[WINDOW] ✅ Isolated scanner cleanup completed")
-        except Exception as e:
-            print(f"[WINDOW] ⚠️ Error during isolated scanner cleanup: {e}")
-        
         # Stop file watcher
         try:
             self._stop_file_watcher()
@@ -799,3 +795,320 @@ class MainWindow(QMainWindow):
                 print(f"[AUTO_SAVE] ✅ Auto-save completed")
             except Exception as e:
                 print(f"[AUTO_SAVE] ❌ Auto-save failed: {e}")
+
+    @Slot(str)
+    def _on_workspace_created(self, workspace_name):
+        """Handle workspace creation."""
+        print(f"[MAIN] 🎉 Workspace created: {workspace_name}")
+        # UI already updated by workspace manager
+
+    @Slot(str)
+    def _on_workspace_deleted(self, workspace_name):
+        """Handle workspace deletion."""
+        print(f"[MAIN] 🗑️ Workspace deleted: {workspace_name}")
+        # If current workspace was deleted, switch to Default
+        if workspace_name == self.current_workspace_name:
+            self.workspace_ctl.switch("Default")
+
+    @Slot()
+    def _on_tree_selection_changed(self):
+        """Handle tree panel selection changes and save workspace state."""
+        if self.current_workspace_name and self.workspaces:
+            try:
+                print(f"[TREE] 📋 File selection changed, saving workspace state...")
+                self._update_current_workspace_state()
+                self._save_current_workspace_state()
+                print(f"[TREE] ✅ Workspace state saved after selection change")
+            except Exception as e:
+                print(f"[TREE] ❌ Error saving workspace state after selection change: {e}")
+
+    @Slot()
+    def update_aggregation_and_tokens(self):
+        """Generate aggregation from current TreeView selections."""
+        try:
+            print("[AGGREGATION] 🔄 Generating content from selections...")
+            
+            # Get checked paths from tree panel
+            if hasattr(self.tree_panel, 'get_checked_paths'):
+                checked = self.tree_panel.get_checked_paths(relative=True)
+                print(f"[AGGREGATION] ✅ get_checked_paths method found, returned {len(checked)} files")
+            else:
+                checked = []
+                print(f"[AGGREGATION] ❌ get_checked_paths method NOT found on tree_panel")
+            
+            print(f"[AGGREGATION] 📁 {len(checked)} files selected")
+            if checked:
+                print(f"[AGGREGATION] 📋 Selected files: {checked[:5]}{'...' if len(checked) > 5 else ''}")
+            
+            if not checked:
+                # No files selected - clear aggregation
+                if hasattr(self, 'aggregation_view'):
+                    self.aggregation_view.set_content("No files selected", 0)
+                print("[AGGREGATION] ℹ️ No files selected - cleared aggregation")
+                return
+            
+            # Generate file tree string
+            tree_str = self._generate_file_tree_string(checked)
+            
+            # Get file content and tokens
+            content, tokens = self._get_aggregated_content(checked)
+            
+            # Combine with system prompt
+            system_prompt = ""
+            if hasattr(self, 'instructions_panel'):
+                system_prompt = self.instructions_panel.get_text()
+            
+            if system_prompt:
+                final_content = f"--- System Prompt ---\n{system_prompt}\n\n--- File Tree ---\n{tree_str}\n\n---\n\n{content}"
+            else:
+                final_content = f"--- File Tree ---\n{tree_str}\n\n---\n\n{content}"
+            
+            # Update aggregation view
+            if hasattr(self, 'aggregation_view'):
+                self.aggregation_view.set_content(final_content, tokens)
+            
+            print(f"[AGGREGATION] ✅ Generated {tokens} tokens from {len(checked)} files")
+            
+        except Exception as e:
+            print(f"[AGGREGATION] ❌ Error generating aggregation: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _generate_file_tree_string(self, checked_paths):
+        """Generate a file tree string from checked paths."""
+        if not checked_paths or not self.current_folder_path:
+            return "No files selected"
+        
+        try:
+            # Simple tree representation
+            tree_lines = []
+            tree_lines.append(f"Project: {os.path.basename(self.current_folder_path)}")
+            
+            # Group by directory
+            dirs = {}
+            for path in sorted(checked_paths):
+                dir_name = os.path.dirname(path) or "."
+                if dir_name not in dirs:
+                    dirs[dir_name] = []
+                dirs[dir_name].append(os.path.basename(path))
+            
+            # Build tree structure
+            for dir_name in sorted(dirs.keys()):
+                if dir_name == ".":
+                    tree_lines.append("├── (root)")
+                else:
+                    tree_lines.append(f"├── {dir_name}/")
+                
+                files = dirs[dir_name]
+                for i, file_name in enumerate(files):
+                    if i == len(files) - 1:
+                        tree_lines.append(f"│   └── {file_name}")
+                    else:
+                        tree_lines.append(f"│   ├── {file_name}")
+            
+            return "\n".join(tree_lines)
+            
+        except Exception as e:
+            print(f"[TREE_GEN] ❌ Error generating tree: {e}")
+            return "Error generating file tree"
+
+    def _get_aggregated_content(self, checked_paths):
+        """Get aggregated content from checked file paths using cached token counts."""
+        if not checked_paths or not self.current_folder_path:
+            return "", 0
+        
+        aggregated_parts = []
+        total_tokens = 0
+        
+        try:
+            # Process files in consistent order
+            for relative_path in sorted(checked_paths):
+                absolute_path = os.path.join(self.current_folder_path, relative_path)
+                
+                if not os.path.isfile(absolute_path):
+                    continue
+                
+                try:
+                    # Get file extension for language
+                    _, ext = os.path.splitext(relative_path)
+                    language = ext[1:] if ext else ""
+                    
+                    # Read file content
+                    with open(absolute_path, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+                    
+                    # Build markdown section
+                    aggregated_parts.append(f"{relative_path}")
+                    aggregated_parts.append(f"```{language}")
+                    aggregated_parts.append(content)
+                    aggregated_parts.append("```\n")
+                    
+                    # Use cached token count from tree model for consistency
+                    token_count = self._get_cached_token_count(absolute_path)
+                    total_tokens += token_count
+                    
+                    print(f"[AGGREGATION] 📊 {relative_path}: {token_count} tokens (cached)")
+                    
+                except Exception as e:
+                    aggregated_parts.append(f"[Error reading {relative_path}: {e}]\n")
+                    print(f"[AGGREGATION] ⚠️ Error reading {relative_path}: {e}")
+            
+            return "\n".join(aggregated_parts), total_tokens
+            
+        except Exception as e:
+            print(f"[AGGREGATION] ❌ Error getting content: {e}")
+            return "Error generating content", 0
+    
+    def _normalize_path_for_cache(self, path: str) -> str:
+        """Normalize path for consistent cache lookup.
+        
+        Ensures consistent path format between storage and retrieval:
+        - Converts to absolute path
+        - Normalizes path separators
+        - Uses forward slashes for consistency
+        """
+        try:
+            # Convert to absolute path and normalize
+            abs_path = os.path.abspath(path)
+            # Convert to forward slashes for consistent storage/retrieval
+            normalized = abs_path.replace('\\', '/')
+            return normalized
+        except Exception:
+            return path.replace('\\', '/')
+    
+    def _get_cached_token_count(self, absolute_path: str) -> int:
+        """Get cached token count using direct path mapping for consistency.
+        
+        This fixes the token cache miss issue by using consistent path normalization
+        and direct dictionary lookup instead of complex tree traversal.
+        
+        Args:
+            absolute_path: Absolute path to the file
+            
+        Returns:
+            Token count from cache, or calculated if not cached
+        """
+        try:
+            # Normalize path for consistent lookup
+            normalized_path = self._normalize_path_for_cache(absolute_path)
+            
+            # Try TreePanelMV's direct token cache first (most efficient)
+            if hasattr(self.tree_panel, 'get_token_cache'):
+                tree_cache = self.tree_panel.get_token_cache()
+                if normalized_path in tree_cache:
+                    cached_count = tree_cache[normalized_path]
+                    print(f"[TOKEN_CACHE] ✅ TreePanel cache hit for {os.path.basename(absolute_path)}: {cached_count}")
+                    return cached_count
+            
+            # Try main window's direct token cache (fallback)
+            if hasattr(self, '_token_cache') and normalized_path in self._token_cache:
+                cached_count = self._token_cache[normalized_path]
+                print(f"[TOKEN_CACHE] ✅ MainWindow cache hit for {os.path.basename(absolute_path)}: {cached_count}")
+                return cached_count
+            
+            # Try tree model lookup with normalized path (compatibility)
+            if hasattr(self.tree_panel, 'file_tree_view') and hasattr(self.tree_panel.file_tree_view, 'model'):
+                model = self.tree_panel.file_tree_view.model
+                
+                # Search through path_to_node mapping with normalized paths
+                if hasattr(model, 'path_to_node'):
+                    # Try multiple path formats for compatibility
+                    path_variants = [
+                        normalized_path,
+                        absolute_path,
+                        absolute_path.replace('\\', '/'),
+                        os.path.normpath(absolute_path)
+                    ]
+                    
+                    for path_variant in path_variants:
+                        if path_variant in model.path_to_node:
+                            node = model.path_to_node[path_variant]
+                            if node and hasattr(node, 'token_count') and node.token_count > 0:
+                                cached_count = node.token_count
+                                print(f"[TOKEN_CACHE] ✅ Model cache hit for {os.path.basename(absolute_path)}: {cached_count}")
+                                # Store in direct cache for future lookups
+                                if not hasattr(self, '_token_cache'):
+                                    self._token_cache = {}
+                                self._token_cache[normalized_path] = cached_count
+                                return cached_count
+            
+            print(f"[TOKEN_CACHE] ⚠️ No cached token found for {os.path.basename(absolute_path)}")
+            
+            # Fallback: calculate tokens using same method as BG_scanner
+            print(f"[TOKEN_CACHE] 🔄 Calculating tokens for {os.path.basename(absolute_path)}")
+            with open(absolute_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            
+            # Use the same token calculation as BG_scanner for consistency
+            from core.helpers import calculate_tokens
+            calculated_count = calculate_tokens(content)
+            
+            # Cache the calculated result for future lookups
+            if not hasattr(self, '_token_cache'):
+                self._token_cache = {}
+            self._token_cache[normalized_path] = calculated_count
+            
+            return calculated_count
+            
+        except Exception as e:
+            print(f"[TOKEN_CACHE] ❌ Error getting token count for {absolute_path}: {e}")
+            # Last resort: simple approximation
+            try:
+                with open(absolute_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                return len(content.split()) + len(content) // 4
+            except:
+                return 0
+    
+    def _verify_token_consistency(self):
+        """Debug method to verify token count consistency between tree view and aggregation."""
+        try:
+            print("[TOKEN_VERIFICATION] =====================================")
+            
+            # Get checked paths
+            if hasattr(self.tree_panel, 'get_checked_paths'):
+                checked_paths = self.tree_panel.get_checked_paths(relative=False)
+                print(f"[TOKEN_VERIFICATION] Checking {len(checked_paths)} files")
+                
+                tree_total = 0
+                agg_total = 0
+                
+                for absolute_path in checked_paths:
+                    # Get tree token count
+                    tree_count = self._get_cached_token_count(absolute_path)
+                    tree_total += tree_count
+                    
+                    # Get aggregation token count (for comparison)
+                    try:
+                        with open(absolute_path, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                        old_calc = len(content.split()) + len(content) // 4
+                        agg_total += old_calc
+                        
+                        filename = os.path.basename(absolute_path)
+                        if tree_count != old_calc:
+                            print(f"[TOKEN_VERIFICATION] ⚠️ {filename}: Tree={tree_count}, Old={old_calc} (diff: {tree_count - old_calc})")
+                        else:
+                            print(f"[TOKEN_VERIFICATION] ✅ {filename}: {tree_count} tokens (consistent)")
+                            
+                    except Exception as e:
+                        print(f"[TOKEN_VERIFICATION] ❌ Error reading {absolute_path}: {e}")
+                
+                print(f"[TOKEN_VERIFICATION] Tree total: {tree_total} tokens")
+                print(f"[TOKEN_VERIFICATION] Old calc total: {agg_total} tokens")
+                print(f"[TOKEN_VERIFICATION] Difference: {tree_total - agg_total} tokens")
+                
+                if tree_total == agg_total:
+                    print("[TOKEN_VERIFICATION] ✅ Token counts are consistent!")
+                else:
+                    print("[TOKEN_VERIFICATION] ⚠️ Token count mismatch detected!")
+                    
+            else:
+                print("[TOKEN_VERIFICATION] ❌ get_checked_paths method not found")
+                
+            print("[TOKEN_VERIFICATION] =====================================")
+            
+        except Exception as e:
+            print(f"[TOKEN_VERIFICATION] ❌ Error during verification: {e}")
+            import traceback
+            traceback.print_exc()

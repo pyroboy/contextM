@@ -1,0 +1,72 @@
+{
+    "schema_version": 1,
+    "workspaces": {
+        "Default": {
+            "folder_path": "C:/Users/jezka/AZPOS",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target",
+                    "venv"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": []
+                }
+            }
+        },
+        "Rat": {
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": []
+                }
+            }
+        }
+    },
+    "last_active_workspace": "Default",
+    "checksum": "63fc8877c0ffd95be96e26bd5f82300e87f65e2603e3c3f6f35ec9a10979b598"
+}

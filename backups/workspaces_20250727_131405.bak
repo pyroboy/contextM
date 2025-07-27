@@ -1,0 +1,75 @@
+{
+    "schema_version": 1,
+    "workspaces": {
+        "Default": {
+            "folder_path": "C:/Users/jezka/AZPOS",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target",
+                    "venv"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": [
+                        "src\\hooks.server.ts",
+                        "src\\app.html"
+                    ]
+                }
+            }
+        },
+        "Rat": {
+            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
+            "scan_settings": {
+                "include_subfolders": true,
+                "live_watcher": true,
+                "ignore_folders": [
+                    ".git",
+                    ".idea",
+                    ".svn",
+                    ".venv",
+                    ".vscode",
+                    "__pycache__",
+                    "bin",
+                    "build",
+                    "csv",
+                    "dist",
+                    "json",
+                    "node_modules",
+                    "obj",
+                    "out",
+                    "target"
+                ]
+            },
+            "instructions": "",
+            "active_selection_group": "Default",
+            "selection_groups": {
+                "Default": {
+                    "description": "Default selection",
+                    "checked_paths": []
+                }
+            }
+        }
+    },
+    "last_active_workspace": "Default",
+    "checksum": "f23df77b29e8b79211ac80612651a2860c0bf05c14dc51717efae6c64ee72eb8"
+}
