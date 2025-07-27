@@ -27,25 +27,26 @@
                 ]
             },
             "instructions": "Instructions sadareetwertsgdfgsdasdasdhhhhgjhgjhgfor the output format: Output code without descriptions, unless it is important. Minimize prose, comments and empty lines.sasd",
-            "active_selection_group": "New Group",
+            "active_selection_group": "Default",
             "selection_groups": {
                 "Default": {
                     "description": "",
-                    "checked_paths": [
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v1.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v2.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json"
-                    ]
+                    "checked_paths": []
                 },
                 "New Group": {
                     "description": "",
                     "checked_paths": [
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v1.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v2.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
+                    ]
+                },
+                "New Group 1": {
+                    "description": "",
+                    "checked_paths": [
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
                     ]
                 }
             }
@@ -88,5 +89,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "f1dbf6deb2e01556408853902edb67c4153b500b26c9af225419c0a169dd9da8"
+    "checksum": "26d022fe9f3cc38af108ef981ed69e0f2f435d9e57720020d512940202d7b869"
 }

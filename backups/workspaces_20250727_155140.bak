@@ -31,7 +31,26 @@
             "selection_groups": {
                 "Default": {
                     "description": "",
-                    "checked_paths": []
+                    "checked_paths": [
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v1.md",
+                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\PRD v2.md"
+                    ]
+                },
+                "New Group": {
+                    "description": "",
+                    "checked_paths": [
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
+                    ]
+                },
+                "New Group 1": {
+                    "description": "",
+                    "checked_paths": [
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
+                    ]
                 }
             }
         },
@@ -73,5 +92,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "fbf8753477936b48ed67aa7fdd73de1cb6eb1e37adce0831c1b2a75162bf66b5"
+    "checksum": "dd219dde98234fad235d155c562a75fe0a31cda6873b58830ed5f632057fc01a"
 }

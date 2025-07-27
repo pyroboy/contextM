@@ -31,26 +31,22 @@
             "selection_groups": {
                 "Default": {
                     "description": "",
-                    "checked_paths": [
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
-                    ]
+                    "checked_paths": []
                 },
                 "New Group": {
                     "description": "",
                     "checked_paths": [
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
                     ]
                 },
                 "New Group 1": {
                     "description": "",
                     "checked_paths": [
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\Format__I_LIKE.md",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\custom_instructions.json",
-                        "C:\\Users\\jezka\\Documents\\GitHub\\contextMNew\\main.py"
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\format__i_like.md",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\custom_instructions.json",
+                        "c:\\users\\jezka\\documents\\github\\contextmnew\\main.py"
                     ]
                 }
             }
@@ -93,5 +89,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "dbcec04d371794169d4ede08662eee433cd183d1dca95c07e5b877536f5e9a5f"
+    "checksum": "26d022fe9f3cc38af108ef981ed69e0f2f435d9e57720020d512940202d7b869"
 }
