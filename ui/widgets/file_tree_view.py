@@ -28,6 +28,11 @@ class FileTreeView(QWidget):
         super().__init__(parent)
         self.root_path = ""
         self._ignore_next_checkbox_signal = False  # Flag to ignore checkbox signals from expansion clicks
+        
+        # Set size policy for the widget to expand and fill available space
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
         self._setup_ui()
         self._setup_model()
         
@@ -48,16 +53,24 @@ class FileTreeView(QWidget):
         self.tree_view.setItemsExpandable(True)  # Allow expansion
         self.tree_view.setExpandsOnDoubleClick(True)  # Double-click to expand
         
+        # Set size policy to expand and fill available space
+        from PySide6.QtWidgets import QSizePolicy
+        self.tree_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
         # Enable checkbox interaction - checkboxes should work by default with ItemIsUserCheckable
         # But we need to ensure the view can handle checkbox state changes
         # Use CurrentChanged trigger which should work for checkboxes
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.CurrentChanged)
         
-        # Configure header
+        # Configure header for proper width stretching
         header = self.tree_view.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)  # Stretch the last section to fill remaining space
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Name column stretches
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Tokens column fits content
+        
+        # Ensure header takes full width
+        header.setDefaultSectionSize(200)  # Minimum width for name column
+        header.setMinimumSectionSize(100)  # Minimum section size
         
         # Loading label
         self.loading_label = QLabel("Loading...")
@@ -185,6 +198,10 @@ class FileTreeView(QWidget):
     def set_checked_paths(self, paths: Set[str]):
         """Set the checked state for a given set of paths and update parent states."""
         from PySide6.QtCore import Qt
+        
+        # Clear the cached checked files set
+        self.model._checked_files.clear()
+        
         # Reset all states first to ensure a clean slate
         for node in self.model.path_map.values():
             node.check_state = Qt.CheckState.Unchecked
@@ -196,6 +213,8 @@ class FileTreeView(QWidget):
                 node = self.model.path_map[path]
                 if not node.is_dir:
                     node.check_state = Qt.CheckState.Checked
+                    # Update cached checked files set
+                    self.model._checked_files.add(path)
                     nodes_to_update_parents_for.append(node)
 
         # Update all parent states from the bottom up, starting from the parents of the changed nodes

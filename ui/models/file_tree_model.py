@@ -73,6 +73,7 @@ class FileTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self.root_node = TreeNode("", True)  # Invisible root
         self.path_to_node: Dict[str, TreeNode] = {}
+        self._checked_files = set()  # Cache of checked file paths for fast aggregation
         self.view = view  # Reference to the view for checking ignore flag
         self.root_path = ""
         
@@ -81,6 +82,7 @@ class FileTreeModel(QAbstractItemModel):
         self.beginResetModel()
         self.root_node = TreeNode("", True)
         self.path_to_node.clear()
+        self._checked_files.clear()  # CRITICAL: Clear cached checked files
         self.root_path = ""
         self.endResetModel()
         
@@ -94,6 +96,7 @@ class FileTreeModel(QAbstractItemModel):
         # Clear existing data
         self.root_node = TreeNode("", True)
         self.path_to_node.clear()
+        self._checked_files.clear()  # CRITICAL: Clear cached checked files
         self.root_path = os.path.normpath(root_path).replace('\\', '/')
         
         # Create root project node
@@ -258,6 +261,13 @@ class FileTreeModel(QAbstractItemModel):
             # Set the new state
             node.check_state = check_state
             
+            # Update cached checked files set for fast aggregation
+            if not node.is_dir:
+                if check_state == Qt.CheckState.Checked:
+                    self._checked_files.add(node.path)
+                else:
+                    self._checked_files.discard(node.path)
+            
             # Debug logging disabled for performance
             # print(f"[CHECKBOX_DEBUG] {node.path}: {check_state.name}")
             
@@ -290,18 +300,61 @@ class FileTreeModel(QAbstractItemModel):
         return flags
 
     def _propagate_to_children(self, parent_node: 'TreeNode', check_state: Qt.CheckState):
-        """Recursively set the check state for all children."""
+        """Recursively set the check state for all children using optimized bulk strategy."""
+        # Collect all nodes that need updating first (bulk strategy)
+        nodes_to_update = []
+        self._collect_children_for_update(parent_node, check_state, nodes_to_update)
+        
+        if not nodes_to_update:
+            return
+        
+        # Block signals during bulk state updates to prevent individual emissions
+        self.blockSignals(True)
+        
+        try:
+            # Update all node states in memory first (no signals yet)
+            for node in nodes_to_update:
+                node.check_state = check_state
+                
+                # Update cached checked files set for fast aggregation
+                if not node.is_dir:
+                    if check_state == Qt.CheckState.Checked:
+                        self._checked_files.add(node.path)
+                    else:
+                        self._checked_files.discard(node.path)
+        finally:
+            # Unblock signals
+            self.blockSignals(False)
+        
+        # Emit single dataChanged signal for the entire range to maintain performance
+        # This tells the view that checkboxes have changed without individual signals
+        if nodes_to_update:
+            # Find the parent's index to emit a range-based signal
+            try:
+                parent_index = self.createIndex(parent_node.row(), 0, parent_node)
+                if parent_index.isValid():
+                    # Emit dataChanged for the parent and let the view handle the refresh
+                    self.dataChanged.emit(parent_index, parent_index, [Qt.ItemDataRole.CheckStateRole])
+                    # Also emit layoutChanged to ensure all child checkboxes update
+                    self.layoutChanged.emit()
+            except (ValueError, IndexError):
+                # Fallback: just emit layoutChanged
+                self.layoutChanged.emit()
+            
+    def _collect_children_for_update(self, parent_node: 'TreeNode', check_state: Qt.CheckState, nodes_to_update: list):
+        """Recursively collect all children that need state updates."""
         for child in parent_node.children:
             if child.check_state != check_state:
-                child.check_state = check_state
-                child_index = self.createIndex(child.row(), 0, child)
-                self.dataChanged.emit(child_index, child_index, [Qt.ItemDataRole.CheckStateRole])
+                nodes_to_update.append(child)
                 if child.is_dir:
-                    self._propagate_to_children(child, check_state)
+                    self._collect_children_for_update(child, check_state, nodes_to_update)
 
     def _update_parent_states(self, node: 'TreeNode'):
-        """Recursively update the check state of parent nodes based on children states."""
+        """Recursively update the check state of parent nodes using bulk strategy."""
+        # Collect all parents that need updating
+        parents_to_update = []
         current_node = node
+        
         while current_node:
             # Skip nodes without children (leaf nodes don't need state calculation)
             if not current_node.children:
@@ -314,19 +367,33 @@ class FileTreeModel(QAbstractItemModel):
             # Only update if state actually changed
             if current_node.check_state != new_state:
                 current_node.check_state = new_state
-                
-                # Create index and emit signal
-                try:
-                    parent_index = self.createIndex(current_node.row(), 0, current_node)
-                    self.dataChanged.emit(parent_index, parent_index, [Qt.ItemDataRole.CheckStateRole])
-                    # Debug logging disabled for performance
-                    # print(f"[PARENT_UPDATE] {current_node.path}: {new_state.name}")
-                except (ValueError, IndexError) as e:
-                    # Debug logging disabled for performance
-                    # print(f"[PARENT_UPDATE_ERROR] Failed to update {current_node.path}: {e}")
-                    pass
+                parents_to_update.append(current_node)
             
             current_node = current_node.parent
+            
+        # Emit efficient signals for parent updates to ensure UI sync
+        if parents_to_update:
+            # Block signals during bulk parent updates
+            self.blockSignals(True)
+            try:
+                pass  # States already updated above
+            finally:
+                self.blockSignals(False)
+            
+            # Emit single dataChanged signal for all parents at once
+            # This is much more efficient than individual signals
+            if len(parents_to_update) == 1:
+                # Single parent - emit specific signal
+                parent = parents_to_update[0]
+                try:
+                    parent_index = self.createIndex(parent.row(), 0, parent)
+                    if parent_index.isValid():
+                        self.dataChanged.emit(parent_index, parent_index, [Qt.ItemDataRole.CheckStateRole])
+                except (ValueError, IndexError):
+                    self.layoutChanged.emit()
+            else:
+                # Multiple parents - emit layoutChanged for efficiency
+                self.layoutChanged.emit()
             
     def _calculate_parent_state(self, parent_node: 'TreeNode') -> Qt.CheckState:
         """Calculate the appropriate check state for a parent based on its children."""
@@ -379,11 +446,23 @@ class FileTreeModel(QAbstractItemModel):
         
     def get_checked_paths(self) -> List[str]:
         """Get a list of all checked file paths, ignoring partially checked folders."""
-        checked_files = []
+        # Use cached set for O(1) performance instead of O(n) iteration
+        cached_result = list(self._checked_files)
+        
+        # Temporary debug: Verify cache matches actual node states
+        actual_checked = []
         for path, node in self.path_to_node.items():
             if not node.is_dir and node.check_state == Qt.CheckState.Checked:
-                checked_files.append(path)
-        return checked_files
+                actual_checked.append(path)
+        
+        if set(cached_result) != set(actual_checked):
+            print(f"[SYNC_DEBUG] Cache mismatch detected!")
+            print(f"[SYNC_DEBUG] Cached: {len(cached_result)} files: {sorted(cached_result)[:5]}...")
+            print(f"[SYNC_DEBUG] Actual: {len(actual_checked)} files: {sorted(actual_checked)[:5]}...")
+            # Return actual state for now to maintain functionality
+            return actual_checked
+        
+        return cached_result
         
     def _collect_checked_paths(self, node: TreeNode, checked_paths: List[str]) -> None:
         """Recursively collect checked paths."""

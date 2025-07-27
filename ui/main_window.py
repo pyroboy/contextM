@@ -72,6 +72,12 @@ class MainWindow(QMainWindow):
 
         self._connect_signals()
 
+        # Add auto-save timer for workspace state
+        self.auto_save_timer = QTimer()
+        self.auto_save_timer.timeout.connect(self._auto_save_workspace_state)
+        self.auto_save_timer.start(30000)  # Save every 30 seconds
+        print(f"[WINDOW] ⏰ Auto-save timer started (30 second intervals)")
+
         # In normal mode, load data and the last active workspace. In test mode, wait for the test to decide.
         if not test_mode:
             self.load_initial_data()
@@ -698,8 +704,20 @@ class MainWindow(QMainWindow):
         self.path_display_label.setText(f"Current Project: {folder_path}")
     
     def closeEvent(self, event):
-        """Handle application close - cleanup isolated scanner."""
-        print(f"[WINDOW] 🚪 Application closing, cleaning up...")
+        """Handle the window close event by ensuring graceful shutdown and saving workspace state."""
+        print(f"[WINDOW] 🚪 Application closing, saving workspace state...")
+        
+        # Save current workspace state before closing
+        if self.current_workspace_name:
+            print(f"[WINDOW] 💾 Saving workspace: {self.current_workspace_name}")
+            try:
+                self._update_current_workspace_state()
+                self._save_current_workspace_state()
+                print(f"[WINDOW] ✅ Workspace state saved")
+            except Exception as e:
+                print(f"[WINDOW] ❌ Error saving workspace state: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Stop isolated background scanner
         try:
@@ -715,5 +733,69 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[WINDOW] ⚠️ Error during file watcher cleanup: {e}")
         
+        # Stop streamlined scanner
+        try:
+            if hasattr(self, 'streamlined_scanner') and self.streamlined_scanner:
+                self.streamlined_scanner.cleanup()
+                print(f"[WINDOW] ✅ Streamlined scanner stopped")
+        except Exception as e:
+            print(f"[WINDOW] ⚠️ Error stopping scanner: {e}")
+        
         print(f"[WINDOW] 👋 Application cleanup completed")
         event.accept()
+
+    def _update_current_workspace_state(self):
+        """Update the current workspace state with all current data."""
+        if not self.current_workspace_name or self.current_workspace_name not in self.workspaces.get('workspaces', {}):
+            print(f"[STATE] ⚠️ Cannot update state - invalid workspace: {self.current_workspace_name}")
+            return
+
+        current_ws = self.workspaces['workspaces'][self.current_workspace_name]
+        
+        # Ensure we have a proper dict structure
+        if not isinstance(current_ws, dict):
+            current_ws = {}
+            self.workspaces['workspaces'][self.current_workspace_name] = current_ws
+
+        # Save all current state
+        current_ws["folder_path"] = self.current_folder_path
+        current_ws["scan_settings"] = self.current_scan_settings
+        current_ws["instructions"] = self.instructions_panel.get_text()
+        current_ws['active_selection_group'] = self.active_selection_group
+        
+        # Get checked paths from tree
+        checked_paths = self.tree_panel.get_checked_paths(relative=True)
+        current_ws['selection_groups'] = self.selection_groups
+        
+        # Update active selection group with current checked paths
+        if self.active_selection_group in self.selection_groups:
+            self.selection_groups[self.active_selection_group]["checked_paths"] = checked_paths
+        
+        print(f"[STATE] ✅ Workspace state updated: {len(checked_paths)} checked files")
+
+    def _save_current_workspace_state(self):
+        """Save workspace state with debug logging."""
+        if not self.workspaces:
+            print("[SAVE] ⚠️ No workspaces to save")
+            return
+        
+        try:
+            print(f"[SAVE] 💾 Saving workspaces...")
+            workspace_manager.save_workspaces(self.workspaces, base_path=self.testing_path)
+            print("[SAVE] ✅ Workspaces saved successfully")
+        except Exception as e:
+            print(f"[SAVE] ❌ Failed to save workspaces: {e}")
+            import traceback
+            traceback.print_exc()
+
+    @Slot()
+    def _auto_save_workspace_state(self):
+        """Auto-save workspace state periodically."""
+        if self.current_workspace_name and self.workspaces:
+            try:
+                print(f"[AUTO_SAVE] 💾 Auto-saving workspace: {self.current_workspace_name}")
+                self._update_current_workspace_state()
+                self._save_current_workspace_state()
+                print(f"[AUTO_SAVE] ✅ Auto-save completed")
+            except Exception as e:
+                print(f"[AUTO_SAVE] ❌ Auto-save failed: {e}")

@@ -2,7 +2,7 @@
     "schema_version": 1,
     "workspaces": {
         "Default": {
-            "folder_path": "C:/Users/jezka/Documents/GitHub/contextMNew",
+            "folder_path": "C:/Users/jezka/AZPOS",
             "scan_settings": {
                 "include_subfolders": true,
                 "ignore_folders": [
@@ -24,22 +24,15 @@
                     "target",
                     "venv",
                     "workspaces.json",
-                    "workspaces.json",
-                    "workspaces.json",
                     "workspaces.json"
                 ],
                 "live_watcher": true
             },
             "instructions": "",
             "active_selection_group": "Default",
-            "selection_groups": {
-                "Default": {
-                    "description": "Default selection",
-                    "checked_paths": []
-                }
-            }
+            "selection_groups": {}
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "3c0bb28b0bf48b0c4381dfadc118d66f123d1fa38f0c3e23b7096e7a5b7123ee"
+    "checksum": "c997b85f941e193cbad91a1e80d5876bdecfcd27e96c9d71c3aa55cf82a9ebf5"
 }

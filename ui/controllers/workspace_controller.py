@@ -1,4 +1,4 @@
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QDialog
 from dialogs.workspace_dialog import WorkspaceManagerDialog
 from core import workspace_manager
@@ -20,6 +20,12 @@ class WorkspaceController(QObject):
                 self.switch(selected)
 
     def switch(self, name, *, initial_load=False):
+        """Switch to a different workspace."""
+        if not initial_load:
+            print(f"[WORKSPACE] 💾 Saving state before switching from '{self.mw.current_workspace_name}' to '{name}'")
+            self.mw._update_current_workspace_state()
+            self.mw._save_current_workspace_state()
+        
         self.mw._switch_workspace(name, initial_load=initial_load)
         self.workspace_changed.emit(name)
 

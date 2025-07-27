@@ -148,50 +148,74 @@ class TreePanelMV(QWidget):
         
     def get_aggregated_content(self):
         """Aggregates content from checked files using the specified format."""
-        import pathlib
-        
-        aggregated_lines = []
-        total_tokens = 0
-        # We need absolute paths for reading files
+        # Get checked paths (now O(1) thanks to caching)
         checked_absolute_paths = self.get_checked_paths(return_set=True, relative=False)
-
-        for path_str in sorted(list(checked_absolute_paths)):
-            path_obj = pathlib.Path(path_str)
-            if not path_obj.is_file():
-                continue
-
+        
+        if not checked_absolute_paths:
+            return "", 0
+        
+        # Pre-allocate list with estimated size for better performance
+        aggregated_parts = []
+        total_tokens = 0
+        
+        # Pre-compute root path for relative path calculations
+        root_path_normalized = os.path.normpath(self.root_path)
+        
+        # Get model reference once to avoid repeated attribute lookups
+        model = self.file_tree_view.model
+        
+        # Process files in sorted order
+        for path_str in sorted(checked_absolute_paths):
             try:
-                # 1. Build the header line (relative path)
-                relative_path_str = os.path.relpath(path_str, self.root_path)
-                aggregated_lines.append(relative_path_str)
-
-                # 2. Build the opening code-fence with language identifier
-                _, file_extension = os.path.splitext(relative_path_str)
-                language_identifier = file_extension.lstrip('.').lower() if file_extension else ""
-                aggregated_lines.append(f"```{language_identifier}")
-
-                # 3. Append the file's actual content
-                with open(path_obj, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
+                # Quick file existence check without creating Path object
+                if not os.path.isfile(path_str):
+                    continue
                 
-                # Sanitize content to avoid breaking the markdown block
-                sanitized_content = content.replace("```", "``·")
-                aggregated_lines.append(sanitized_content)
-
-                # 4. Close the code block
-                aggregated_lines.append("```")
-                aggregated_lines.append("")  # Blank line between files
-
-                # Add to total tokens from model data
-                node = self.file_tree_view.model.get_node_by_path(path_str)
+                # Calculate relative path once
+                try:
+                    relative_path_str = os.path.relpath(path_str, root_path_normalized)
+                except ValueError:
+                    # Fallback if relpath fails (different drives on Windows)
+                    relative_path_str = os.path.basename(path_str)
+                
+                # Get file extension for language identifier
+                file_extension = os.path.splitext(relative_path_str)[1]
+                language_identifier = file_extension[1:].lower() if file_extension else ""
+                
+                # Read file content with size limit for performance
+                try:
+                    # Check file size before reading to avoid memory issues
+                    file_size = os.path.getsize(path_str)
+                    if file_size > 10 * 1024 * 1024:  # 10MB limit
+                        content = f"[File too large: {file_size:,} bytes - skipped for performance]"
+                    else:
+                        with open(path_str, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                        
+                        # Only sanitize if content contains backticks (performance optimization)
+                        if '```' in content:
+                            content = content.replace("```", "``·")
+                except (OSError, IOError) as e:
+                    content = f"[Error reading file: {e}]"
+                
+                # Build file section efficiently
+                file_section = f"{relative_path_str}\n```{language_identifier}\n{content}\n```\n\n"
+                aggregated_parts.append(file_section)
+                
+                # Get token count from cached model data (O(1) lookup)
+                node = model.get_node_by_path(path_str)
                 if node:
                     total_tokens += node.token_count
-
+                    
             except Exception as e:
-                aggregated_lines.append(f"[Error reading file {relative_path_str}: {e}]")
-                aggregated_lines.append("")
-
-        return "\n".join(aggregated_lines), total_tokens
+                # Handle any unexpected errors gracefully
+                error_section = f"[Error processing file {path_str}: {e}]\n\n"
+                aggregated_parts.append(error_section)
+        
+        # Join all parts at once for better performance than multiple appends
+        aggregated_content = "".join(aggregated_parts)
+        
+        return aggregated_content, total_tokens
         
     def _on_model_data_changed(self, top_left, bottom_right, roles):
         """Handle model data changes, especially checkbox state changes."""

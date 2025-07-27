@@ -31,6 +31,11 @@ class ScanController(QObject):
             print(f"[SCAN_CTRL] ❌ Dialog cancelled or rejected")
 
     def start(self, folder_path, settings, checked_paths_to_restore=None):
+        """Start scanning with automatic workspace saving."""
+        print(f"[SCAN_CTRL] 💾 Saving workspace state before new scan...")
+        self.mw._update_current_workspace_state()
+        self.mw._save_current_workspace_state()
+        
         print(f"[SCAN_CTRL] 🚀 Starting scan for: {folder_path}")
         print(f"[SCAN_CTRL] ⚙️ Scan settings: {settings}")
         
