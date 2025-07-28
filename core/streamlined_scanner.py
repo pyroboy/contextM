@@ -155,7 +155,7 @@ class StreamlinedScanner(QObject):
         
         # Check if process is still alive (backup check)
         if self.current_process and not self.current_process.is_alive():
-            if not scan_completed:  # Only print if we haven't already stopped
+            if not self.scan_completed:  # Only print if we haven't already stopped
                 print(f"[STREAMLINED] 🏁 Background process completed")
                 self.update_timer.stop()
     
