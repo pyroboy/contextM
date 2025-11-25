@@ -4,7 +4,7 @@
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QComboBox, QPushButton, QMessageBox, QSizePolicy
+    QWidget, QHBoxLayout, QVBoxLayout, QComboBox, QPushButton, QMessageBox, QSizePolicy
 )
 
 
@@ -41,14 +41,27 @@ class SelectionManagerPanel(QWidget):
         self.delete_button.setToolTip("Delete selection group")
 
         # --- Layout ---
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
+        layout = QVBoxLayout(self)  # Changed from QHBoxLayout
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
+
+        # Row 1: Dropdown
         layout.addWidget(self.group_combo)
-        layout.addWidget(self.save_button)
-        layout.addWidget(self.new_button)
-        layout.addWidget(self.edit_button)
-        layout.addWidget(self.delete_button)
+
+        # Row 2: Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(2)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+
+        button_layout.addWidget(self.save_button)
+        button_layout.addWidget(self.new_button)
+        button_layout.addWidget(self.edit_button)
+        button_layout.addWidget(self.delete_button)
+
+        layout.addLayout(button_layout)
+
+        # Fix height so it doesn't expand in the splitter
+        self.setFixedHeight(85)
 
         # --- Connections ---
         self.group_combo.currentTextChanged.connect(self._on_group_changed)

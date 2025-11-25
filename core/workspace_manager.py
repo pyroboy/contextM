@@ -209,7 +209,6 @@ def _manage_backups(source_path, base_path=None):
     backup_filename = f"workspaces_{timestamp}.bak"
     dest_backup_path = backup_dir / backup_filename
     shutil.copy(source_path, dest_backup_path)
-    print(f"Created backup: {dest_backup_path}")
 
     try:
         all_backups = sorted(backup_dir.glob("workspaces_*.bak"), key=os.path.getmtime, reverse=True)
@@ -217,7 +216,6 @@ def _manage_backups(source_path, base_path=None):
         if len(all_backups) > MAX_BACKUPS:
             for old_backup in all_backups[MAX_BACKUPS:]:
                 old_backup.unlink()
-                print(f"Removed backup (limit exceeded): {old_backup}")
 
         retention_limit = datetime.now() - timedelta(days=BACKUP_RETENTION_DAYS)
         remaining_backups = sorted(backup_dir.glob("workspaces_*.bak"), key=os.path.getmtime)
@@ -225,7 +223,6 @@ def _manage_backups(source_path, base_path=None):
             backup_time = datetime.fromtimestamp(backup.stat().st_mtime)
             if backup_time < retention_limit:
                 backup.unlink()
-                print(f"Removed backup (expired): {backup}")
 
     except OSError as e:
         print(f"Error pruning backups: {e}")
@@ -292,7 +289,6 @@ def save_workspaces(workspaces, base_path=None):
         existing_data = None
 
     if data_to_save == existing_data:
-        print("No meaningful changes detected. Skipping save and backup.")
         return
 
     # Add checksum
@@ -311,7 +307,6 @@ def save_workspaces(workspaces, base_path=None):
         _manage_backups(temp_file_path, base_path=base_path)
 
         shutil.move(temp_file_path, workspace_file_path)
-        print(f"Workspaces saved to {workspace_file_path}")
 
     except (IOError, TypeError) as e:
         print(f"Error saving workspaces: {e}")

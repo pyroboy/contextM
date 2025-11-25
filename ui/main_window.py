@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QSplitter, QLabel, QStyle
 )
-from PySide6.QtCore import Qt, Slot, QTimer, QFileSystemWatcher
+from PySide6.QtCore import Qt, Slot, QTimer, QFileSystemWatcher, QThread, Signal, QMutex
 
 # Core components
 from core import workspace_manager, selection_manager
@@ -29,6 +29,77 @@ from dialogs.custom_instructions_dialog import CustomInstructionsDialog
 from .controllers.workspace_controller import WorkspaceController
 from .controllers.scan_controller import ScanController
 from .controllers.selection_controller import SelectionController
+
+
+class AggregationWorker(QThread):
+    finished = Signal(str, int)  # content, total_tokens
+
+    def __init__(self, folder_path, checked_paths, system_prompt, parent=None):
+        super().__init__(parent)
+        self.folder_path = folder_path
+        self.checked_paths = checked_paths
+        self.system_prompt = system_prompt
+        self._is_cancelled = False
+
+    def run(self):
+        import os
+
+        if not self.checked_paths:
+            self.finished.emit("No files selected", 0)
+            return
+
+        try:
+            # 1. Generate Tree String
+            from ui.helpers.aggregation_helper import generate_file_tree_string
+
+            tree_str = generate_file_tree_string(self.folder_path, self.checked_paths)
+
+            # 2. Aggregate Content
+            content_parts = []
+            total_tokens = 0
+
+            # Sort for deterministic output
+            sorted_paths = sorted(list(self.checked_paths))
+
+            if self.system_prompt:
+                content_parts.append(f"--- System Prompt ---\n{self.system_prompt}\n")
+
+            content_parts.append(f"--- File Tree ---\n{tree_str}\n\n---\n")
+
+            for rel_path in sorted_paths:
+                if self._is_cancelled:
+                    return
+
+                abs_path = os.path.join(self.folder_path, rel_path)
+
+                if not os.path.isfile(abs_path):
+                    continue
+
+                try:
+                    # Get extension
+                    _, ext = os.path.splitext(rel_path)
+                    lang = ext[1:].lower() if ext else ""
+
+                    # Read File
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                        file_content = f.read()
+
+                    # Lightweight token estimate in the worker thread
+                    total_tokens += len(file_content) // 4
+
+                    content_parts.append(f"\n`{rel_path}`\n```{lang}\n{file_content}\n```\n")
+
+                except Exception as e:
+                    content_parts.append(f"\n[Error reading {rel_path}: {e}]\n")
+
+            self.finished.emit("".join(content_parts), total_tokens)
+
+        except Exception as e:
+            self.finished.emit(f"Error during aggregation: {str(e)}", 0)
+
+    def cancel(self):
+        self._is_cancelled = True
+
 
 class MainWindow(QMainWindow):
     def __init__(self, test_mode=False, testing_path=None):
@@ -78,6 +149,13 @@ class MainWindow(QMainWindow):
         self.auto_save_timer.timeout.connect(self._auto_save_workspace_state)
         self.auto_save_timer.start(30000)  # Save every 30 seconds
         print(f"[WINDOW] ⏰ Auto-save timer started (30 second intervals)")
+
+        # Aggregation Optimization - debounce + background worker
+        self._aggregation_timer = QTimer()
+        self._aggregation_timer.setSingleShot(True)
+        self._aggregation_timer.setInterval(200)  # Wait 200ms after last click
+        self._aggregation_timer.timeout.connect(self._perform_background_aggregation)
+        self._current_agg_worker = None
 
         # In normal mode, load data and the last active workspace. In test mode, wait for the test to decide.
         if not test_mode:
@@ -192,11 +270,11 @@ class MainWindow(QMainWindow):
         self.right_splitter.addWidget(self.aggregation_view)
         self.right_splitter.addWidget(self.file_changes_panel)
 
-        # Configure splitter sizes - ensure file changes panel is visible
+        # Configure splitter sizes - ensure Repo Status panel is visible
         self.right_splitter.setStretchFactor(0, 0)  # Instructions panel
         self.right_splitter.setStretchFactor(1, 1)  # Aggregation view
-        self.right_splitter.setStretchFactor(2, 0)  # File changes panel
-        self.right_splitter.setSizes([150, 500, 150])  # Ensure file changes panel has space
+        self.right_splitter.setStretchFactor(2, 0)  # Repo Status panel
+        self.right_splitter.setSizes([100, 400, 300])
 
         right_layout.addWidget(self.right_splitter)
         self.splitter.addWidget(right_container)
@@ -538,7 +616,16 @@ class MainWindow(QMainWindow):
         self._save_current_workspace_state()
 
     def _on_tree_selection_changed(self):
+        """Handle tree panel selection changes and save workspace state."""
+        # 1. Update Aggregation
         self.update_aggregation_and_tokens()
+
+        # 2. Update Repo Status "Active Selection" list
+        if hasattr(self, 'tree_panel') and hasattr(self, 'file_changes_panel'):
+            current_selection = self.tree_panel.get_checked_paths(relative=False, return_set=True)
+            self.file_changes_panel.update_active_selection(current_selection)
+
+        # 3. Save State
         self._update_current_workspace_state()
         # self._save_current_workspace_state()
 
@@ -548,6 +635,10 @@ class MainWindow(QMainWindow):
         start_time = __import__('time').time()
         
         self._update_path_display(self.current_folder_path or "No folder selected.")
+        # Update Repo Status panel root and log workspace load
+        if hasattr(self, 'file_changes_panel'):
+            self.file_changes_panel.set_root_path(self.current_folder_path)
+            self.file_changes_panel.add_system_message(f"Loaded workspace: {workspace_name}")
         self.refresh_button.setEnabled(bool(self.current_folder_path))
 
         if self.current_folder_path:
@@ -677,12 +768,9 @@ class MainWindow(QMainWindow):
 
 
     def update_aggregation_and_tokens(self):
-        from .helpers.aggregation_helper import generate_file_tree_string
-        checked = self.tree_panel.get_checked_paths(relative=True) # This is correct, the wrapper handles it
-        tree_str = generate_file_tree_string(self.current_folder_path, checked)
-        content, tokens = self.tree_panel.get_aggregated_content()
-        final = f"{tree_str}\n\n---\n\n{content}"
-        self.aggregation_view.set_content(final, tokens)
+        """Starts the debounce timer. Does NOT calculate immediately."""
+        # Reset timer to wait for user to stop clicking
+        self._aggregation_timer.start()
 
     def _setup_watcher_indicator(self):
         """Adds a green dot indicator to the status bar for watcher status."""
@@ -933,55 +1021,45 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def update_aggregation_and_tokens(self):
-        """Generate aggregation from current TreeView selections."""
-        try:
-            print("[AGGREGATION] 🔄 Generating content from selections...")
-            
-            # Get checked paths from tree panel
-            if hasattr(self.tree_panel, 'get_checked_paths'):
-                checked = self.tree_panel.get_checked_paths(relative=True)
-                print(f"[AGGREGATION] ✅ get_checked_paths method found, returned {len(checked)} files")
-            else:
-                checked = []
-                print(f"[AGGREGATION] ❌ get_checked_paths method NOT found on tree_panel")
-            
-            print(f"[AGGREGATION] 📁 {len(checked)} files selected")
-            if checked:
-                print(f"[AGGREGATION] 📋 Selected files: {checked[:5]}{'...' if len(checked) > 5 else ''}")
-            
-            if not checked:
-                # No files selected - clear aggregation
-                if hasattr(self, 'aggregation_view'):
-                    self.aggregation_view.set_content("No files selected", 0)
-                print("[AGGREGATION] ℹ️ No files selected - cleared aggregation")
-                return
-            
-            # Generate file tree string
-            tree_str = self._generate_file_tree_string(checked)
-            
-            # Get file content and tokens
-            content, tokens = self._get_aggregated_content(checked)
-            
-            # Combine with system prompt
-            system_prompt = ""
-            if hasattr(self, 'instructions_panel'):
-                system_prompt = self.instructions_panel.get_text()
-            
-            if system_prompt:
-                final_content = f"--- System Prompt ---\n{system_prompt}\n\n--- File Tree ---\n{tree_str}\n\n---\n\n{content}"
-            else:
-                final_content = f"--- File Tree ---\n{tree_str}\n\n---\n\n{content}"
-            
-            # Update aggregation view
-            if hasattr(self, 'aggregation_view'):
-                self.aggregation_view.set_content(final_content, tokens)
-            
-            print(f"[AGGREGATION] ✅ Generated {tokens} tokens from {len(checked)} files")
-            
-        except Exception as e:
-            print(f"[AGGREGATION] ❌ Error generating aggregation: {e}")
-            import traceback
-            traceback.print_exc()
+        """Starts the debounce timer. Does NOT calculate immediately."""
+        # Reset timer to wait for user to stop clicking
+        self._aggregation_timer.start()
+
+    def _perform_background_aggregation(self):
+        """Called by timer. Starts the background thread."""
+        if not self.current_folder_path:
+            return
+
+        # Kill existing worker if running
+        if self._current_agg_worker and self._current_agg_worker.isRunning():
+            self._current_agg_worker.cancel()
+            self._current_agg_worker.wait()
+
+        # Show loading state
+        if hasattr(self, "aggregation_view"):
+            self.aggregation_view.set_loading(True)
+
+        # Get fresh data
+        checked = set()
+        if hasattr(self.tree_panel, "get_checked_paths"):
+            checked = self.tree_panel.get_checked_paths(relative=True, return_set=True)
+
+        prompt = ""
+        if hasattr(self, "instructions_panel"):
+            prompt = self.instructions_panel.get_text()
+
+        # Start Worker
+        self._current_agg_worker = AggregationWorker(self.current_folder_path, checked, prompt)
+        self._current_agg_worker.finished.connect(self._on_aggregation_finished)
+        self._current_agg_worker.start()
+
+    @Slot(str, int)
+    def _on_aggregation_finished(self, content, tokens):
+        """Called when aggregation thread is done."""
+        if hasattr(self, "aggregation_view"):
+            # Note: we could refine tokens using the main cache if needed.
+            self.aggregation_view.set_content(content, tokens)
+            self.aggregation_view.set_loading(False)
 
     def _generate_file_tree_string(self, checked_paths):
         """Generate a file tree string from checked paths."""

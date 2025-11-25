@@ -11,14 +11,17 @@ class FileChangesPanel(QWidget):
         super().__init__(parent)
         self.root_path = None
         self.file_changes = {}
+        self.active_selection_set = set()
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        title_label = QLabel("Recent File Changes")
-        title_label.setFont(QFont("Arial", 10, QFont.Bold))
+        title_label = QLabel("Repo Status")
+        # Make the title slightly more prominent
+        title_font = QFont("Arial", 11, QFont.Bold)
+        title_label.setFont(title_font)
         layout.addWidget(title_label)
 
         self.changes_list = QListWidget()
@@ -55,9 +58,13 @@ class FileChangesPanel(QWidget):
                 self._add_entry(dst_path, f"renamed from {display_src_path}")
 
     def _add_entry(self, file_path, change_info):
-        if file_path not in self.file_changes:
-            self.file_changes[file_path] = deque(maxlen=5)
-        self.file_changes[file_path].appendleft(change_info)
+        # Normalize path to ensure consistency with watcher and selection paths
+        norm_path = os.path.normpath(file_path).replace('\\', '/')
+
+        if norm_path not in self.file_changes:
+            self.file_changes[norm_path] = deque(maxlen=5)
+        self.file_changes[norm_path].appendleft(change_info)
+        # Force immediate display update for this entry
         self._update_display()
 
     def _get_display_path(self, path):
@@ -89,17 +96,51 @@ class FileChangesPanel(QWidget):
                 else:
                     change_parts.append(str(c))
             changes_str = ", ".join(change_parts)
-            text = f"{display_path}  ({changes_str})"
+            # Normalize file_path for lookup in the active selection set
+            norm_path = os.path.normpath(file_path).replace('\\', '/')
+            is_watched = norm_path in self.active_selection_set
+
+            prefix = "⚠️ [WATCHED] " if is_watched else ""
+            text = f"{prefix}{display_path}  ({changes_str})"
 
             item = QListWidgetItem(text)
 
-            # Color based on the most recent change
+            # Priority coloring
             most_recent = changes[0]
-            if isinstance(most_recent, int):
-                item.setForeground(QColor("green") if most_recent > 0 else QColor("red"))
-            elif "add" in most_recent or "renamed" in most_recent:
-                item.setForeground(QColor("green"))
-            elif "remov" in most_recent:
-                item.setForeground(QColor("red"))
+            if is_watched:
+                item.setForeground(QColor("#d32f2f"))  # Red for watched file changes
+                item.setBackground(QColor("#ffebee"))  # Light red background
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            else:
+                if isinstance(most_recent, int):
+                    item.setForeground(QColor("green") if most_recent > 0 else QColor("red"))
+                elif "add" in most_recent or "renamed" in most_recent:
+                    item.setForeground(QColor("green"))
+                elif "remov" in most_recent:
+                    item.setForeground(QColor("red"))
 
             self.changes_list.addItem(item)
+
+    def update_active_selection(self, paths: set):
+        """Updates the set of currently selected files for highlighting."""
+        # Normalize keys to ensure matching works on Windows
+        self.active_selection_set = {os.path.normpath(p).replace('\\', '/') for p in paths}
+        self._update_display()
+
+    def add_system_message(self, message: str):
+        """Adds a general system message to the log."""
+        item = QListWidgetItem(f"ℹ️ {message}")
+
+        # Use a distinct blue color and bold font
+        item.setForeground(QColor("#2196F3"))
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+
+        # Add a light blue background to make it pop
+        item.setBackground(QColor("#E3F2FD"))
+
+        self.changes_list.insertItem(0, item)
+        self.changes_list.scrollToTop()

@@ -68,12 +68,20 @@ class AggregationView(QWidget):
         return self.aggregation_output.toPlainText()
 
     def set_content(self, text, token_count=None):
-        self.aggregation_output.setPlainText(text)
+        self.aggregation_output.blockSignals(True)
+        try:
+            self.aggregation_output.setPlainText(text)
+        finally:
+            self.aggregation_output.blockSignals(False)
         self.token_info_label.setText(f"Total Tokens: {token_count or 0}")
 
-    def set_content(self, text, token_count=None):
-        self.aggregation_output.setPlainText(text)
-        self.token_info_label.setText(f"Total Tokens: {token_count or 0}")
+    def set_loading(self, is_loading):
+        if is_loading:
+            self.token_info_label.setText("Processing...")
+            self.aggregation_output.setStyleSheet("color: gray;")
+        else:
+            # Reset color and leave text as-is
+            self.aggregation_output.setStyleSheet("")
 
     def _update_display(self):
         """Constructs the full output from prompt and content and updates the view."""

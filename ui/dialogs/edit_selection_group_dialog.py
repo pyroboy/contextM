@@ -60,21 +60,31 @@ class EditSelectionGroupDialog(QDialog):
         ok_button = self.button_box.button(QDialogButtonBox.Ok)
 
         is_valid = True
+        message = ""
         if not name:
             is_valid = False
+            message = "Error: Name cannot be empty"
         elif name.lower() in self.other_group_names:
             is_valid = False
+            message = "Error: A group with this name already exists"
         elif self.original_name == "Default" and name != "Default":
             is_valid = False
+            message = "Error: The Default group name cannot be changed"
         
         ok_button.setEnabled(is_valid)
+        if is_valid:
+            # Preserve existing status text about file count when name is valid
+            file_count = self.path_list.count()
+            self.status_label.setText(f"Status: {file_count} files / 0 tokens")
+        else:
+            self.status_label.setText(message)
 
     def set_current_selection(self, paths: list[str]):
         """Updates the list widget with the current tree selection."""
         self.path_list.clear()
         self.path_list.addItems(sorted(paths))
         file_count = len(paths)
-        self.status_label.setText(f"Status: {file_count} files / 0 tokens")
+        self.status_label.setText(f"Reset to {file_count} files from active tree")
 
     def get_result(self) -> dict:
         """Returns the updated group data, including the potentially new name."""

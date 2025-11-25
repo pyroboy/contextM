@@ -3,6 +3,7 @@
 """Data model and persistence logic for selection groups."""
 
 import os
+import time
 from typing import Dict, Set, List, Union
 
 
@@ -22,7 +23,7 @@ def load_groups(workspace_dict: dict) -> dict:
             absolute_paths = []
             for rel_path in group_data.get("checked_paths", []):
                 try:
-                    abs_path = os.path.normpath(os.path.join(workspace_root, rel_path))
+                    abs_path = os.path.normpath(os.path.join(workspace_root, rel_path)).replace('\\', '/')
                     absolute_paths.append(abs_path)
                 except Exception:
                     # Fallback to original path if conversion fails
@@ -56,16 +57,16 @@ def save_group(workspace_dict: dict, name: str, description: str, paths: Union[S
     if workspace_root:
         for path in paths:
             try:
-                rel_path = os.path.relpath(path, workspace_root)
+                rel_path = os.path.relpath(path, workspace_root).replace('\\', '/')
                 # Only use relative path if it doesn't start with .. (outside workspace)
                 if not rel_path.startswith('..'):
                     relative_paths.append(rel_path)
                 else:
-                    # Keep absolute path if it's outside workspace
-                    relative_paths.append(path)
+                    # Keep absolute path if it's outside workspace, but normalize slashes
+                    relative_paths.append(path.replace('\\', '/'))
             except Exception:
                 # Fallback to absolute if conversion fails
-                relative_paths.append(path)
+                relative_paths.append(path.replace('\\', '/'))
     else:
         # No workspace root, store as-is
         relative_paths = list(paths)
@@ -74,13 +75,14 @@ def save_group(workspace_dict: dict, name: str, description: str, paths: Union[S
     if "selection_groups" not in workspace_dict:
         workspace_dict["selection_groups"] = {}
     
-    # Save with relative paths
+    # Save with relative paths and timestamp
     workspace_dict["selection_groups"][name] = {
         "description": description,
-        "checked_paths": sorted(list(set(relative_paths)))
+        "checked_paths": sorted(list(set(relative_paths))),
+        "last_updated": time.time(),
     }
     
-    print(f"[SELECTION] 💾 Saved group '{name}' with {len(relative_paths)} paths (relative to workspace)")
+    print(f"[SELECTION] Saved group '{name}' with {len(relative_paths)} paths (relative to workspace) and timestamp")
 
 
 def delete_group(workspace_dict: dict, name: str) -> None:

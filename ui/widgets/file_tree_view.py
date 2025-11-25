@@ -211,17 +211,22 @@ class FileTreeView(QWidget):
         for path in paths:
             node = None
             
-            # Fix #3: Case-Insensitive Path Matching for Windows
+            # First try direct match against stored paths
             if path in self.model.path_to_node:
                 node = self.model.path_to_node[path]
-            elif os.name == 'nt':  # Windows - try case-insensitive matching
-                # Normalize path for case-insensitive comparison on Windows
-                normalized_path = os.path.normcase(path)
-                for stored_path, stored_node in self.model.path_to_node.items():
-                    if os.path.normcase(stored_path) == normalized_path:
-                        node = stored_node
-                        print(f"[SELECT] 🔍 Case-insensitive match: '{path}' -> '{stored_path}'")
-                        break
+            else:
+                # CRITICAL FIX: try a normalized forward-slash variant
+                normalized_variant = path.replace('\\', '/')
+                if normalized_variant in self.model.path_to_node:
+                    node = self.model.path_to_node[normalized_variant]
+                # Fix #3: Case-Insensitive Path Matching for Windows
+                elif os.name == 'nt':  # Windows - try case-insensitive matching
+                    normalized_path = os.path.normcase(normalized_variant)
+                    for stored_path, stored_node in self.model.path_to_node.items():
+                        if os.path.normcase(stored_path) == normalized_path:
+                            node = stored_node
+                            print(f"[SELECT] 🔍 Case-insensitive match: '{path}' -> '{stored_path}'")
+                            break
             
             if node and not node.is_dir:
                 node.check_state = Qt.CheckState.Checked
@@ -266,10 +271,9 @@ class FileTreeView(QWidget):
         
     # File system event handling
     def update_from_fs_events(self, event_batch: List):
-        """Handle file system events (placeholder for now)."""
-        # TODO: Implement incremental updates for file system changes
-        # For now, we can defer this as it's not critical for initial performance
-        pass
+        """Handle file system events by delegating to the underlying model."""
+        if self.model:
+            self.model.handle_fs_events(event_batch)
         
     # Compatibility methods for existing TreePanel interface
     def setUpdatesEnabled(self, enabled: bool):

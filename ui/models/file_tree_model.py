@@ -4,9 +4,12 @@ Replaces QTreeWidget for scalable performance with large file trees.
 """
 
 import os
+import pathlib
 from typing import Dict, List, Optional, Any, Tuple, Set
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QObject
 from PySide6.QtGui import QIcon
+
+from core.helpers import calculate_tokens
 
 
 class TreeNode:
@@ -162,6 +165,24 @@ class FileTreeModel(QAbstractItemModel):
         
         parent_node.add_child(file_node)
         self.path_to_node[file_path] = file_node
+
+    def _remove_node_recursively(self, node: TreeNode) -> None:
+        """Recursively remove a node and all its children from path_to_node and caches.
+
+        This does not detach the node from its parent; callers are responsible for
+        removing it from the parent's children list before calling this helper.
+        """
+        # Remove children first
+        for child in list(node.children):
+            self._remove_node_recursively(child)
+
+        # Remove this node from the path index and checked-files cache
+        path = node.path
+        if path in self.path_to_node:
+            self.path_to_node.pop(path, None)
+
+        if not node.is_dir and path:
+            self._checked_files.discard(path)
         
     def _restore_checked_paths(self, pending_restore_paths: Set[str]) -> None:
         """Restore checked state for pending paths after tree population.
@@ -522,3 +543,93 @@ class FileTreeModel(QAbstractItemModel):
             checked_paths.append(node.path)
         for child in node.children:
             self._collect_checked_paths(child, checked_paths)
+
+    def handle_fs_events(self, event_batch: List[Dict[str, Any]]) -> None:
+        """Apply a batch of filesystem events to the tree model.
+
+        Events are dictionaries with at least:
+            - action: 'created', 'deleted', 'moved', or 'modified'
+            - src_path: original path
+            - dst_path: new path (for 'moved')
+        """
+        if not event_batch:
+            return
+
+        # Notify views that the layout is about to change for incremental updates
+        self.layoutAboutToBeChanged.emit()
+
+        def _normalize(path: str) -> str:
+            return os.path.normpath(path).replace('\\', '/') if path else ''
+
+        def _handle_created(path: str) -> None:
+            norm_path = _normalize(path)
+            if not norm_path or norm_path in self.path_to_node:
+                return
+
+            parent_path = os.path.dirname(norm_path)
+            if not parent_path:
+                parent_path = self.root_path or norm_path
+
+            parent_node = self._ensure_directory_path(parent_path)
+            is_dir = os.path.isdir(norm_path)
+
+            node = TreeNode(norm_path, is_dir, parent_node)
+
+            # Best-effort initial metadata
+            try:
+                node.file_size = os.path.getsize(norm_path) if not is_dir else 0
+            except OSError:
+                node.file_size = 0
+
+            if not is_dir:
+                # Read file contents and calculate tokens; fall back to 0 on error
+                try:
+                    with open(norm_path, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+                    node.token_count = calculate_tokens(content)
+                except OSError:
+                    node.token_count = 0
+            else:
+                node.token_count = 0
+
+            parent_node.add_child(node)
+            self.path_to_node[norm_path] = node
+
+        def _handle_deleted(path: str) -> None:
+            norm_path = _normalize(path)
+            if not norm_path:
+                return
+
+            node = self.path_to_node.get(norm_path)
+            if not node:
+                return
+
+            # Detach from parent children list
+            parent = node.parent
+            if parent and node in parent.children:
+                parent.children.remove(node)
+
+            # Recursively remove from indices and caches
+            self._remove_node_recursively(node)
+
+        for event in event_batch:
+            action = event.get('action')
+            src_path = event.get('src_path', '')
+
+            if action == 'created':
+                _handle_created(src_path)
+
+            elif action == 'deleted':
+                _handle_deleted(src_path)
+
+            elif action == 'moved':
+                dst_path = event.get('dst_path', '')
+                # Treat move as delete + create so paths/indexes remain consistent
+                _handle_deleted(src_path)
+                _handle_created(dst_path)
+
+            # 'modified' events do not change the tree structure; token updates
+            # (if any) can be handled separately by the background tokenizer.
+
+        # Notify views that layout has changed so they can refresh
+        self.layoutChanged.emit()

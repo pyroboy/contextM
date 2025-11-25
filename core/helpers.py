@@ -103,3 +103,18 @@ def calculate_tokens(text: str, encoding_name: str = TOKEN_ENCODING_NAME) -> int
     except Exception as e:
         print(f"Warning: Could not calculate tokens using '{encoding_name}': {e}")
         return 0
+
+
+def count_tokens_in_file(file_path: str) -> int:
+    """Open a file and return its token count using calculate_tokens.
+
+    Uses UTF-8 with replacement for decoding errors and returns 0 on any
+    exception to provide a safe, centralized file token counting helper.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        return calculate_tokens(content)
+    except Exception as e:
+        print(f"Warning: Error counting tokens for '{file_path}': {e}")
+        return 0

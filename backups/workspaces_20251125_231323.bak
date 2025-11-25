@@ -176,6 +176,12 @@
                 "rat": {
                     "description": "",
                     "checked_paths": [
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.github/workflows/ci.yml",
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/.gitignore",
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/CACHEDIR.TAG",
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/README.md",
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/v/cache/lastfailed",
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/v/cache/nodeids",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/DIRTY_STATE_TRACKING.md",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/Format__I_LIKE.md",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/PRD v1.md",
@@ -190,7 +196,7 @@
                         "C:/Users/jezka/Documents/GitHub/contextMNew/test_change.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/workspaces.json"
                     ],
-                    "last_updated": 1764083604.7860367
+                    "last_updated": 1764083603.7623813
                 },
                 "Okay": {
                     "description": "",
@@ -365,5 +371,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "852f7565ac16e1a3088c1686c617b3e63eb70e690c6e3c6f0bcf4915aafadb69"
+    "checksum": "e00a4cadb47c23e6cf0fa51709e4cfda186299080abf623f281f044ce2cdf8fa"
 }

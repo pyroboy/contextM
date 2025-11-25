@@ -221,6 +221,31 @@ class TreePanelMV(QWidget):
     def update_from_fs_events(self, event_batch: List):
         """Handle file system events."""
         self.file_tree_view.update_from_fs_events(event_batch)
+        # Keep the token cache in sync with filesystem changes to avoid
+        # stale entries leaking into aggregation logic.
+        if not hasattr(self, '_token_cache'):
+            self._token_cache = {}
+
+        for event in event_batch:
+            try:
+                action = event.get('action')
+                src_path = event.get('src_path')
+                if not src_path:
+                    continue
+
+                normalized_src = self._normalize_path_for_cache(src_path)
+
+                if action in ('deleted', 'moved'):
+                    # Remove any cached token entry for the old path
+                    self._token_cache.pop(normalized_src, None)
+
+                elif action == 'modified':
+                    # We currently don't have an updated token count here; drop
+                    # the cache entry so the next aggregation forces a refresh.
+                    self._token_cache.pop(normalized_src, None)
+            except Exception:
+                # Cache maintenance errors should never break the UI
+                continue
         
     # Compatibility methods for existing interface
     def setUpdatesEnabled(self, enabled: bool):
