@@ -81,6 +81,32 @@ def _migrate_workspaces(data):
     #     data["schema_version"] = 2
     return data
 
+def _validate_and_correct_path(folder_path):
+    """Validates if a path is usable on the current OS and corrects it if not."""
+    if not folder_path or not isinstance(folder_path, str):
+        return str(Path.home())
+
+    try:
+        # Simple check: Does it look like a valid path on this OS?
+        # This is not foolproof but catches obvious cross-platform issues.
+        p = Path(folder_path)
+        # An invalid path on Windows might not raise an error on POSIX, but `exists` will be false.
+        # A key issue is a drive letter like 'C:' on a non-Windows system.
+        if os.name != 'nt' and ':' in p.parts[0]:
+             print(f"Correcting invalid path '{folder_path}' to home directory.")
+             return str(Path.home())
+        
+        # A more direct check could be to see if the root of the path is valid.
+        if not p.anchor:
+            # Relative paths might be okay, but for workspaces, we expect absolute.
+            pass
+
+    except (TypeError, ValueError) as e:
+        print(f"Path validation error for '{folder_path}': {e}. Correcting to home directory.")
+        return str(Path.home())
+
+    return folder_path
+
 def _load_and_verify(filepath):
     """Loads a JSON file, verifies its checksum, and returns the data."""
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -175,6 +201,9 @@ def load_workspaces(base_path=None):
 
     workspaces = {}
     for ws_name, ws_data in workspaces_data.items():
+        # Validate and correct the folder path to be OS-compatible
+        folder_path = _validate_and_correct_path(ws_data.get("folder_path"))
+
         checked_paths_list = ws_data.get("checked_paths", [])
         
         # Ensure complete scan_settings with proper validation
@@ -182,7 +211,7 @@ def load_workspaces(base_path=None):
         complete_scan_settings = ensure_complete_scan_settings(raw_scan_settings)
         
         validated_data = {
-            "folder_path": ws_data.get("folder_path"),
+            "folder_path": folder_path,
             "scan_settings": complete_scan_settings,
             "instructions": ws_data.get("instructions", ""),
             "checked_paths": checked_paths_list,

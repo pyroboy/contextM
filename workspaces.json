@@ -186,11 +186,10 @@
                         "C:/Users/jezka/Documents/GitHub/contextMNew/package.json",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/raattt.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/requirements-test.txt",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/requirements.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/test_change.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/workspaces.json"
                     ],
-                    "last_updated": 1764083604.7860367
+                    "last_updated": 1764083627.5653892
                 },
                 "Okay": {
                     "description": "",
@@ -365,5 +364,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "852f7565ac16e1a3088c1686c617b3e63eb70e690c6e3c6f0bcf4915aafadb69"
+    "checksum": "c5446977edc37606c3b44e3454a90210a1ac66580eab8f70c566ed3587d39ad4"
 }
