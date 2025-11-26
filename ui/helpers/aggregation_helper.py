@@ -1,6 +1,6 @@
+from PySide6.QtCore import QObject, Signal
 import os
 import pathlib
-from PySide6.QtCore import QObject, Signal
 
 def generate_file_tree_string(current_folder_path: str, relative_paths: set) -> str:
     """Generate a file tree representation from a set of relative paths."""
@@ -28,14 +28,15 @@ def generate_file_tree_string(current_folder_path: str, relative_paths: set) -> 
     return "\n".join([f"{root_name}/"] + build(path_tree))
 
 
+
 class AggregationWorker(QObject):
     finished = Signal(dict)
     error = Signal(str)
     progress_update = Signal(int, int)  # current_file, total_files
     token_update = Signal(int)          # current_token_count
 
-    # Explicit list of binary files to skip to prevent clipboard corruption
-    BINARY_EXTENSIONS = {'.DS_Store', '.pyc', '.git', '.bin', '.exe', '.dll', '.so', '.dylib', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg'}
+    # List of binary extensions to explicitly skip
+    BINARY_EXTENSIONS = {'.DS_Store', '.pyc', '.git', '.bin', '.exe', '.dll', '.so', '.dylib'}
 
     def __init__(self, file_paths, mode='xml'):
         super().__init__()
@@ -49,7 +50,7 @@ class AggregationWorker(QObject):
         current_chunk_size = 0
         total_tokens = 0
         
-        # Internal chunk limit (~500k chars) used for memory efficiency, not UI navigation
+        # Internal chunk limit (~500k chars) to prevent memory spikes
         CHUNK_SIZE_LIMIT = 500000 
 
         total_files = len(self.file_paths)
@@ -64,20 +65,18 @@ class AggregationWorker(QObject):
             filename = os.path.basename(file_path)
             _, ext = os.path.splitext(filename)
             
-            # Skip known binary files (fixes the .DS_Store issue)
             if filename in self.BINARY_EXTENSIONS or ext in self.BINARY_EXTENSIONS:
                 print(f"[AGG_WORKER] ⏭️ Skipping binary file: {filename}")
                 continue
             
             try:
                 # 2. Read & Sanitize
-                # 'errors=replace' prevents crashing on unexpected characters
                 with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
                     
-                # 3. CRITICAL FIX: Strip Null Bytes (\x00)
-                # If these get into the string, the Clipboard thinks the text ended early.
+                # CRITICAL FIX: Strip Null Bytes (\x00)
                 if '\x00' in content:
+                    # Log if we are stripping null bytes for verification
                     null_count = content.count('\x00')
                     if null_count > 0:
                         print(f"[AGG_WORKER] ⚠️ Found {null_count} null bytes in {filename}. Cleaning...")
@@ -86,12 +85,12 @@ class AggregationWorker(QObject):
                 formatted_content = self._format_content(file_path, content)
                 content_len = len(formatted_content)
                 
-                # 4. Token Estimate (Roughly 4 chars = 1 token)
+                # 3. Token Estimate (4 chars ~= 1 token)
                 estimated_tokens = content_len // 4
                 total_tokens += estimated_tokens
                 self.token_update.emit(total_tokens)
 
-                # 5. Internal Chunking (Invisible to User)
+                # 4. Internal Chunking
                 if current_chunk_size + content_len > CHUNK_SIZE_LIMIT:
                     chunks.append("".join(current_chunk_content))
                     current_chunk_content = []

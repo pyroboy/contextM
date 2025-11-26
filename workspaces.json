@@ -182,7 +182,6 @@
                     "description": "",
                     "checked_paths": [
                         "C:/Users/jezka/Documents/GitHub/contextMNew/.DS_Store",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/.github/workflows/ci.yml",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/.gitignore",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/.gitignore",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/.pytest_cache/CACHEDIR.TAG",
@@ -193,7 +192,6 @@
                         "C:/Users/jezka/Documents/GitHub/contextMNew/Format__I_LIKE.md",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/PRD v1.md",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/PRD v2.md",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/aggregation_chunk_01.md",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/__init__.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/bg_scanner.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/helpers.py",
@@ -206,14 +204,11 @@
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/watcher.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/worker_process_tokenizer.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/core/workspace_manager.py",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/custom_instructions.json",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/dialogs/__init__.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/dialogs/custom_instructions_dialog.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/dialogs/scan_config_dialog.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/dialogs/workspace_dialog.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/main.py",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/package-lock.json",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/package.json",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/raattt.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/requirements-test.txt",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/requirements.txt",
@@ -269,10 +264,9 @@
                         "C:/Users/jezka/Documents/GitHub/contextMNew/ui/widgets/instructions_panel.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/ui/widgets/selection_manager.py",
                         "C:/Users/jezka/Documents/GitHub/contextMNew/ui/widgets/tree_panel.py",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/ui/widgets/tree_panel_mv.py",
-                        "C:/Users/jezka/Documents/GitHub/contextMNew/workspaces.json"
+                        "C:/Users/jezka/Documents/GitHub/contextMNew/ui/widgets/tree_panel_mv.py"
                     ],
-                    "last_updated": 1764131958.0042272
+                    "last_updated": 1764132881.0198414
                 },
                 "New Group 1": {
                     "description": "",
@@ -392,5 +386,5 @@
         }
     },
     "last_active_workspace": "Default",
-    "checksum": "84a1bb98a36d07895f78b280ef31f152de412fe3a60a25cc9215aae360a67b6e"
+    "checksum": "4779a20cded7ec0f8ac0435d4bb46938bf9cab3ea952273e3a69dd433ef4bed1"
 }
