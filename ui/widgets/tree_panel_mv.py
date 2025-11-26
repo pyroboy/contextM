@@ -48,6 +48,7 @@ class TreePanelMV(QWidget):
         
         # Connect model signals for checkbox changes
         self.file_tree_view.model.dataChanged.connect(self._on_model_data_changed)
+        self.file_tree_view.model.layoutChanged.connect(self._on_model_layout_changed)
         
     def show_loading(self, show: bool = True):
         """Show or hide loading indicator."""
@@ -387,6 +388,12 @@ class TreePanelMV(QWidget):
         if Qt.ItemDataRole.CheckStateRole in roles:
             # Emit the item_checked_changed signal for compatibility
             self.item_checked_changed.emit()
+
+    def _on_model_layout_changed(self):
+        """Handle model layout changes (bulk updates) as checked changes."""
+        # Layout changes often imply bulk checkbox updates or structure changes
+        # that affect selection, so we trigger the checked changed signal.
+        self.item_checked_changed.emit()
             
     def _log_selected_files(self):
         """Log currently selected files and all checked files from the model perspective."""

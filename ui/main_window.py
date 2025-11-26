@@ -102,7 +102,7 @@ class AggregationWorker(QThread):
                         pass
             processed_bytes = 0
 
-            max_chunk_tokens = 300000
+            max_chunk_tokens = 600000
             current_chunk_tokens = 0
             fd, temp_path = tempfile.mkstemp(suffix=".agg.txt")
             os.close(fd)
@@ -442,6 +442,7 @@ class MainWindow(QMainWindow):
             # Connect model's dataChanged signal to selection manager dirty tracking for Model/View TreePanel
             if hasattr(self.tree_panel, 'file_tree_view') and hasattr(self.tree_panel.file_tree_view, 'model'):
                 self.tree_panel.file_tree_view.model.dataChanged.connect(self._on_model_data_changed)
+                self.tree_panel.file_tree_view.model.layoutChanged.connect(self._on_model_layout_changed)
         self.left_splitter.addWidget(self.selection_manager_panel)
         self.left_splitter.addWidget(self.tree_panel)
         self.left_splitter.setStretchFactor(0, 0)
@@ -987,8 +988,7 @@ class MainWindow(QMainWindow):
 
 
     def update_aggregation_and_tokens(self):
-        """Starts the debounce timer or requires manual start based on size."""
-        manual_threshold = 250000
+        """Starts the debounce timer for aggregation regardless of selection size."""
         current_tokens = 0
         if hasattr(self.tree_panel, "get_selected_token_count"):
             try:
@@ -997,10 +997,6 @@ class MainWindow(QMainWindow):
                     self.aggregation_view.update_token_count(current_tokens)
             except Exception as e:
                 print(f"[MAIN_WINDOW] ⚠️ Error updating token count: {e}")
-        if current_tokens > manual_threshold:
-            if hasattr(self, "aggregation_view"):
-                self.aggregation_view.set_manual_start_visible(True, current_tokens)
-            return
         if hasattr(self, "aggregation_view"):
             self.aggregation_view.set_manual_start_visible(False, current_tokens)
         self._aggregation_timer.start()
@@ -1263,12 +1259,21 @@ class MainWindow(QMainWindow):
     def _on_model_data_changed(self, top_left, bottom_right, roles):
         """Handle model data changes, specifically checkbox state changes."""
         from PySide6.QtCore import Qt
-        
-        # Check if this was a checkbox state change
         if Qt.ItemDataRole.CheckStateRole in roles:
             # Mark selection manager as dirty when checkboxes are toggled
             self.selection_manager_panel.set_dirty(True)
             print(f"[SELECTION] 🔄 Model checkbox changed - selection manager marked as dirty")
+            # Immediately update aggregation view
+            self.update_aggregation_and_tokens()
+
+    @Slot()
+    def _on_model_layout_changed(self):
+        """Handle model layout changes (bulk updates)."""
+        # Treat layout changes as potential bulk checkbox updates
+        self.selection_manager_panel.set_dirty(True)
+        print(f"[SELECTION] 🔄 Model layout changed - selection manager marked as dirty")
+        # Ensure aggregation reflects latest selection
+        self.update_aggregation_and_tokens()
 
     @Slot()
     def _on_instructions_changed(self):
@@ -1292,8 +1297,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def update_aggregation_and_tokens(self):
-        """Starts debounce or requires manual start when selection is large."""
-        manual_threshold = 250000
+        """Start debounce timer and update status immediately on selection change."""
+        # FIX: Always auto-start aggregation; no manual threshold here
         current_tokens = 0
         if hasattr(self.tree_panel, "get_selected_token_count"):
             try:
@@ -1302,12 +1307,19 @@ class MainWindow(QMainWindow):
                     self.aggregation_view.update_token_count(current_tokens)
             except Exception as e:
                 print(f"[MAIN_WINDOW] ⚠️ Error updating token count: {e}")
-        if current_tokens > manual_threshold:
-            if hasattr(self, "aggregation_view"):
-                self.aggregation_view.set_manual_start_visible(True, current_tokens)
-            return
+
         if hasattr(self, "aggregation_view"):
             self.aggregation_view.set_manual_start_visible(False, current_tokens)
+
+        # FEEDBACK: Let the user know the click/selection was registered
+        try:
+            self.statusBar().showMessage(
+                f"Selection updated ({current_tokens:,} tokens). Aggregating in 0.5s...",
+                1000,
+            )
+        except Exception:
+            pass
+
         self._aggregation_timer.start()
 
     def _perform_background_aggregation(self):
@@ -1349,18 +1361,14 @@ class MainWindow(QMainWindow):
                     if model_checked:
                         print(f"[AGGREGATION] 🔍 First 3 from cache: {list(model_checked)[:3]}")
 
-        manual_threshold = 250000
-        current_tokens = 0
+        # FEEDBACK: Show when background work actually begins
         try:
-            if hasattr(self.tree_panel, "get_selected_token_count"):
-                current_tokens = self.tree_panel.get_selected_token_count()
+            self.statusBar().showMessage(
+                f"Aggregating {len(checked)} files...",
+                3000,
+            )
         except Exception:
-            current_tokens = 0
-        if current_tokens > manual_threshold or len(checked) > 200:
-            if hasattr(self, "aggregation_view"):
-                self.aggregation_view.set_manual_start_visible(True, current_tokens)
-                self.aggregation_view.set_loading(False)
-            return
+            pass
 
         prompt = ""
         if hasattr(self, "instructions_panel"):
