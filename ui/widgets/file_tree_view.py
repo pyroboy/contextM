@@ -175,7 +175,10 @@ class FileTreeView(QWidget):
         self.root_path = os.path.normpath(root_path).replace('\\', '/')
         
         # Populate model directly (this is FAST!)
+        model_start = time.time()
         self.model.populate_from_bg_scanner(items, root_path)
+        model_time = (time.time() - model_start) * 1000
+        print(f"[TREE_VIEW] 📊 Model population took {model_time:.2f}ms")
         
         # Expand root level
         root_index = self.model.index(0, 0)  # First child of invisible root

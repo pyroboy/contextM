@@ -62,6 +62,9 @@ class TreePanelMV(QWidget):
         Populate tree with items from BG_scanner.
         This is the key performance improvement - Model/View architecture!
         """
+        start_time = time.time()
+        print(f"[TREE_PANEL] 🚀 Starting tree population with {len(items)} items")
+
         # Clear existing tree
         self.clear_tree()
         
@@ -72,16 +75,25 @@ class TreePanelMV(QWidget):
         self._token_cache = {}
         
         # Build token cache during population for efficient lookups
+        cache_start = time.time()
         self._build_token_cache(items, root_path)
+        cache_time = (time.time() - cache_start) * 1000
+        print(f"[TREE_PANEL] 🏗️ Token cache built in {cache_time:.2f}ms")
         
         # Populate using Model/View (this is FAST!)
+        view_start = time.time()
         self.file_tree_view.populate_tree(items, root_path)
+        view_time = (time.time() - view_start) * 1000
+        print(f"[TREE_PANEL] 🌳 View population took {view_time:.2f}ms")
         
         # Expand root level
         self.file_tree_view.expand_to_depth(0)
         
         # Fix #2: Selection Timing Correction - finalize tree population
         self._finalize_tree_population()
+        
+        total_time = (time.time() - start_time) * 1000
+        print(f"[TREE_PANEL] ✅ populate_tree completed in {total_time:.2f}ms")
         
     def _finalize_tree_population(self):
         """Fix #2: Complete tree population with proper selection restoration timing."""
@@ -90,8 +102,15 @@ class TreePanelMV(QWidget):
         # Restore pending paths after tree is fully populated
         if self._pending_restore_paths:
             print(f"[SELECT] 🔄 Restoring {len(self._pending_restore_paths)} pending paths")
+            print(f"[SELECT] 📋 First 3 pending paths: {list(self._pending_restore_paths)[:3]}")
             self.set_checked_paths(self._pending_restore_paths)
-            print(f"[SELECT] ✅ Selection restoration completed")
+            
+            # Verify restoration worked
+            actual_checked = self.get_checked_paths(return_set=True)
+            print(f"[SELECT] ✅ Selection restoration completed - now have {len(actual_checked)} checked files")
+            if actual_checked:
+                print(f"[SELECT] 📋 First 3 actually checked: {list(actual_checked)[:3]}")
+            
             # Clear pending paths after restoration
             self._pending_restore_paths = set()
         else:

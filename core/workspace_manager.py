@@ -4,6 +4,7 @@ import json
 import hashlib
 import shutil
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -257,7 +258,12 @@ def _manage_backups(source_path, base_path=None):
         print(f"Error pruning backups: {e}")
 
 def save_workspaces(workspaces, base_path=None):
-    """Saves the workspaces dictionary, creating a backup only if data has changed."""
+    """Saves the workspaces dictionary, creating a backup only if data has changed.
+
+    Returns True if a save occurred, False if no change or on error.
+    """
+    import time
+    start_time = time.time()
     workspace_file_path = _get_workspace_file_path(base_path)
 
     # Deepcopy for safe manipulation
@@ -265,7 +271,7 @@ def save_workspaces(workspaces, base_path=None):
         workspaces_copy = copy.deepcopy(workspaces)
     except Exception as e:
         print(f"Error deep copying workspace data: {e}")
-        return
+        return False
 
     # Clean data for serialization (convert sets to lists)
     last_active = workspaces_copy.get("last_active_workspace", None)
@@ -318,7 +324,7 @@ def save_workspaces(workspaces, base_path=None):
         existing_data = None
 
     if data_to_save == existing_data:
-        return
+        return False
 
     # Add checksum
     json_bytes = json.dumps(data_to_save, indent=4).encode('utf-8')
@@ -329,19 +335,24 @@ def save_workspaces(workspaces, base_path=None):
     # Atomic write
     temp_file_path = workspace_file_path.with_suffix('.json.tmp')
     try:
+        json_start = time.time()
         with open(temp_file_path, 'w', encoding='utf-8') as f:
             json.dump(final_data, f, indent=4)
+        json_time = (time.time() - json_start) * 1000
+        print(f"[SAVE] 📝 JSON dump took {json_time:.2f}ms")
         
         # Create backup from the temp file before moving
         _manage_backups(temp_file_path, base_path=base_path)
-
+        
         shutil.move(temp_file_path, workspace_file_path)
-
+        
+        total_time = (time.time() - start_time) * 1000
+        print(f"[SAVE] ✅ Workspaces saved successfully in {total_time:.2f}ms")
+        return True
+        
     except (IOError, TypeError) as e:
-        print(f"Error saving workspaces: {e}")
-
-
-
+        print(f"[SAVE] ❌ Error saving workspaces: {e}")
+        return False
 
 def load_custom_instructions(base_path=None):
     """Loads custom instruction templates from JSON file.

@@ -322,6 +322,10 @@ class FileTreeModel(QAbstractItemModel):
             # Set the new state
             node.check_state = check_state
             
+            # Debug logging for directories
+            if node.is_dir:
+                print(f"[CHECKBOX] 📁 Directory checked: {node.path} -> {check_state.name}")
+            
             # Update cached checked files set for fast aggregation
             if not node.is_dir:
                 if check_state == Qt.CheckState.Checked:
@@ -337,7 +341,11 @@ class FileTreeModel(QAbstractItemModel):
 
             # Propagate changes to children if this is a directory
             if node.is_dir and check_state != Qt.CheckState.PartiallyChecked:
+                num_children = len(node.children) if hasattr(node, 'children') else 0
+                print(f"[CHECKBOX] 🔄 Propagating {check_state.name} to {num_children} children of {node.path}")
                 self._propagate_to_children(node, check_state)
+                cache_size = len(self._checked_files)
+                print(f"[CHECKBOX] ✅ After propagation, _checked_files cache has {cache_size} entries")
                 
             # Update parent states recursively
             self._update_parent_states(node.parent)
@@ -508,20 +516,10 @@ class FileTreeModel(QAbstractItemModel):
     def get_checked_paths(self) -> List[str]:
         """Get a list of all checked file paths, ignoring partially checked folders.
         
-        This method traverses the tree dynamically to collect checked file paths
-        and ensures the cache is synchronized with the actual tree state.
+        OPTIMIZED: Returns the cached set of checked files directly (O(1)).
         """
-        # Collect checked file paths by traversing the tree
-        checked_paths = []
-        self._collect_checked_file_paths(self.root_node, checked_paths)
-        
-        # Synchronize the cache with the actual tree state
-        actual_checked_set = set(checked_paths)
-        if self._checked_files != actual_checked_set:
-            # Cache is out of sync, update it
-            self._checked_files = actual_checked_set.copy()
-        
-        return checked_paths
+        # Return a list of the cached checked files
+        return list(self._checked_files)
         
     def _collect_checked_file_paths(self, node: TreeNode, checked_paths: List[str]) -> None:
         """Recursively collect checked file paths (not directory paths).

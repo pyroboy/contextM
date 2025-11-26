@@ -46,6 +46,8 @@ def background_scanner_process(folder_path: str, settings: Dict, result_queue: m
         file_paths_to_tokenize = []
         
         # Walk directory tree
+        walk_start = time.time()
+        files_processed_count = 0
         for root, dirs, files in os.walk(folder_path):
             # Filter ignored directories
             if settings.get('ignore_folders'):
@@ -58,6 +60,10 @@ def background_scanner_process(folder_path: str, settings: Dict, result_queue: m
             
             # Add file items
             for file in files:
+                files_processed_count += 1
+                if files_processed_count % 1000 == 0:
+                    print(f"[BG_SCANNER] ⏱️ Processed {files_processed_count} files in structure scan...")
+                
                 file_path = os.path.join(root, file)
                 
                 try:
@@ -74,30 +80,35 @@ def background_scanner_process(folder_path: str, settings: Dict, result_queue: m
                         # File is skipped - add with 0 tokens and reason
                         _, reason = SmartFileHandler.get_file_display_info(file_path, file_size, strategy)
                         items.append((file_path, False, True, reason, 0))
-                        print(f"[BG_SCANNER] ⏭️ Skipped {os.path.basename(file_path)}: {reason}")
+                        # print(f"[BG_SCANNER] ⏭️ Skipped {os.path.basename(file_path)}: {reason}")
                     else:
                         # File will be tokenized - add with -1 (loading) for now
                         items.append((file_path, False, True, "", -1))
                         file_paths_to_tokenize.append(file_path)
-                        print(f"[BG_SCANNER] 📝 Queued for tokenization: {os.path.basename(file_path)} ({file_size//1024}KB)")
+                        # print(f"[BG_SCANNER] 📝 Queued for tokenization: {os.path.basename(file_path)} ({file_size//1024}KB)")
                 
                 except Exception as e:
                     print(f"[BG_SCANNER] ❌ Error processing {file_path}: {e}")
                     items.append((file_path, False, False, f"Error: {str(e)[:50]}", 0))
         
+        walk_time = (time.time() - walk_start) * 1000
+        print(f"[BG_SCANNER] 🚶 os.walk completed in {walk_time:.2f}ms")
+
         structure_time = (time.time() - structure_start) * 1000
         print(f"[BG_SCANNER] ✅ Directory structure scan completed in {structure_time:.2f}ms")
         print(f"[BG_SCANNER] 📊 Found {len(items)} items, {len(file_paths_to_tokenize)} files to tokenize")
         
         # Send initial structure to main process (OPTIONAL - main process can ignore this)
         try:
+            queue_start = time.time()
             result_queue.put({
                 'type': 'structure_complete',
                 'items': items,
                 'files_to_tokenize': len(file_paths_to_tokenize),
                 'timestamp': time.time()
             }, timeout=1)  # Short timeout - if main process is busy, just continue
-            print(f"[BG_SCANNER] 📤 Sent initial structure to main process")
+            queue_time = (time.time() - queue_start) * 1000
+            print(f"[BG_SCANNER] 📤 Sent initial structure to main process (took {queue_time:.2f}ms)")
         except:
             print(f"[BG_SCANNER] ⚠️ Main process busy - continuing without sending structure")
         

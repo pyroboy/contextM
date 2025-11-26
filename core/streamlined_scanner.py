@@ -133,12 +133,20 @@ class StreamlinedScanner(QObject):
         
         while results_processed < 50:  # Moderate limit for efficiency
             try:
+                queue_get_start = time.time()
                 result = self.result_queue.get_nowait()
+                queue_get_time = (time.time() - queue_get_start) * 1000
+                if queue_get_time > 10:
+                     print(f"[STREAMLINED] ⚠️ Slow queue get: {queue_get_time:.2f}ms")
+
                 result_type = result.get('type', 'unknown')
                 
                 # Only process scan_complete and structure_complete - skip progress updates
                 if result_type in ['scan_complete', 'structure_complete']:
+                    process_start = time.time()
                     self._process_result(result)
+                    process_time = (time.time() - process_start) * 1000
+                    print(f"[STREAMLINED] ⏱️ Processed {result_type} in {process_time:.2f}ms")
                 elif result_type == 'progress_update' and not self.scan_completed:
                     # Only process progress if scan not completed yet
                     self._process_result(result)

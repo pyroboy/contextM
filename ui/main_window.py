@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import pathlib
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
@@ -32,7 +33,17 @@ from .controllers.selection_controller import SelectionController
 
 
 class AggregationWorker(QThread):
-    finished = Signal(str, int)  # content, total_tokens
+    """Background worker that aggregates content without emitting large payloads.
+
+    Uses a zero-copy handover: the aggregated text is stored on the worker
+    instance in `result_text` and only a small status + token count are sent
+    through the Qt signals.
+    """
+
+    # finished_signal emits success status (True/False) and total tokens, NO TEXT
+    finished_signal = Signal(bool, int)
+    progress_signal = Signal(int)
+    token_progress_signal = Signal(int)
 
     def __init__(self, folder_path, checked_paths, system_prompt, parent=None):
         super().__init__(parent)
@@ -41,64 +52,240 @@ class AggregationWorker(QThread):
         self.system_prompt = system_prompt
         self._is_cancelled = False
 
+        # Result storage (read from main thread after completion)
+        self.result_text = ""
+        self.result_file_path = ""
+        self.result_file_paths = []
+        self.result_chunk_tokens = []
+        self.error_message = ""
+
     def run(self):
         import os
-
-        if not self.checked_paths:
-            self.finished.emit("No files selected", 0)
-            return
+        import time
+        from ui.helpers.aggregation_helper import generate_file_tree_string
+        from core.helpers import calculate_tokens
 
         try:
-            # 1. Generate Tree String
-            from ui.helpers.aggregation_helper import generate_file_tree_string
+            if not self.checked_paths:
+                self.result_text = "No files selected"
+                self.finished_signal.emit(True, 0)
+                return
 
+            if self._is_cancelled:
+                return
+
+            # 1. Tree generation
+            tree_start = time.time()
             tree_str = generate_file_tree_string(self.folder_path, self.checked_paths)
+            tree_time = (time.time() - tree_start) * 1000
+            print(f"[AGG_WORKER] 🌳 Tree generation took {tree_time:.2f}ms")
+            # Early UI nudge so users don't see 0% forever
+            self.progress_signal.emit(1)
+            self.token_progress_signal.emit(0)
+            self.msleep(1)
 
-            # 2. Aggregate Content
-            content_parts = []
+            import tempfile
             total_tokens = 0
 
-            # Sort for deterministic output
             sorted_paths = sorted(list(self.checked_paths))
+            total_files = len(sorted_paths)
 
-            if self.system_prompt:
-                content_parts.append(f"--- System Prompt ---\n{self.system_prompt}\n")
+            # Pre-scan sizes for percent based on bytes (skip for huge selections)
+            total_bytes = 0
+            if total_files <= 300:
+                for p in sorted_paths:
+                    ap = os.path.join(self.folder_path, p)
+                    try:
+                        if os.path.isfile(ap):
+                            total_bytes += os.path.getsize(ap)
+                    except Exception:
+                        pass
+            processed_bytes = 0
 
-            content_parts.append(f"--- File Tree ---\n{tree_str}\n\n---\n")
+            max_chunk_tokens = 300000
+            current_chunk_tokens = 0
+            fd, temp_path = tempfile.mkstemp(suffix=".agg.txt")
+            os.close(fd)
+            self.result_file_path = temp_path
+            self.result_file_paths = [temp_path]
 
-            for rel_path in sorted_paths:
+            def write_header(out_file):
+                """Write header and return accurate token count."""
+                header = ""
+                if self.system_prompt:
+                    header += f"--- System Prompt ---\n{self.system_prompt}\n\n"
+                header += f"--- File Tree ---\n{tree_str}\n\n---\n"
+                out_file.write(header)
+                return calculate_tokens(header)
+
+            out = open(temp_path, "w", encoding="utf-8", errors="replace")
+            current_chunk_tokens = write_header(out)
+
+            agg_loop_start = time.time()
+            files_processed = 0
+
+            for i, rel_path in enumerate(sorted_paths):
                 if self._is_cancelled:
+                    out.close()
                     return
+                    
+                # Update progress
+                if total_files > 0 and (i % 10 == 0 or i == 0):
+                    percent = int((processed_bytes / total_bytes) * 100) if total_bytes > 0 else int((i / total_files) * 100)
+                    self.progress_signal.emit(percent)
+                    self.token_progress_signal.emit(total_tokens)
+                    self.msleep(1)
 
                 abs_path = os.path.join(self.folder_path, rel_path)
-
                 if not os.path.isfile(abs_path):
+                    continue
+                
+                # Skip known binary files that would break clipboard with null bytes
+                binary_patterns = {'.DS_Store', '.pyc', '.pyo', '.so', '.dll', '.exe', '.bin', '.obj'}
+                if any(abs_path.endswith(pattern) for pattern in binary_patterns):
+                    print(f"[AGG_WORKER] ⏭️ Skipping binary file: {rel_path}")
                     continue
 
                 try:
-                    # Get extension
-                    _, ext = os.path.splitext(rel_path)
-                    lang = ext[1:].lower() if ext else ""
-
-                    # Read File
+                    # Read entire file content first
+                    # Use errors='replace' to handle binary content gracefully
                     with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
                         file_content = f.read()
-
-                    # Lightweight token estimate in the worker thread
-                    total_tokens += len(file_content) // 4
-
-                    content_parts.append(f"\n`{rel_path}`\n```{lang}\n{file_content}\n```\n")
-
+                    
+                    # Additional check: Skip if file contains too many null bytes (likely binary)
+                    null_byte_count = file_content.count('\x00')
+                    if null_byte_count > 10:  # More than 10 null bytes = probably binary
+                        print(f"[AGG_WORKER] ⏭️ Skipping binary-like file (has {null_byte_count} null bytes): {rel_path}")
+                        continue
+                    
+                    # Skip empty files
+                    if not file_content:
+                        continue
+                    
+                    # Calculate accurate token count for this file
+                    file_tokens = calculate_tokens(file_content)
+                    
+                    # Calculate file size for progress tracking
+                    file_bytes = len(file_content.encode("utf-8", errors="ignore"))
+                    processed_bytes += file_bytes
+                    
+                    # Prepare file header and footer
+                    _, ext = os.path.splitext(rel_path)
+                    lang = ext[1:].lower() if ext else ""
+                    file_header = f"\n`{rel_path}`\n```{lang}\n"
+                    file_footer = "\n```\n"
+                    
+                    # Calculate tokens for header and footer
+                    header_footer_tokens = calculate_tokens(file_header + file_footer)
+                    total_file_tokens = file_tokens + header_footer_tokens
+                    
+                    # Check if file fits in current chunk
+                    # If current chunk has content and adding this file would exceed limit, start new chunk
+                    if current_chunk_tokens > 0 and (current_chunk_tokens + total_file_tokens) > max_chunk_tokens:
+                        # Close current chunk
+                        out.close()
+                        self.result_chunk_tokens.append(current_chunk_tokens)
+                        print(f"[AGG_WORKER] 📦 Chunk {len(self.result_chunk_tokens)} completed with {current_chunk_tokens:,} tokens")
+                        
+                        # Start new chunk
+                        fd2, temp_path2 = tempfile.mkstemp(suffix=".agg.txt")
+                        os.close(fd2)
+                        self.result_file_paths.append(temp_path2)
+                        out = open(temp_path2, "w", encoding="utf-8", errors="replace")
+                        current_chunk_tokens = write_header(out)
+                        print(f"[AGG_WORKER] 📦 Started chunk {len(self.result_file_paths)} with header ({current_chunk_tokens:,} tokens)")
+                    
+                    
+                    # Write entire file to current chunk (never split mid-file)
+                    print(f"[AGG_WORKER] 📝 Writing file: {rel_path} ({len(file_content):,} chars)")
+                    print(f"[AGG_WORKER] 📝 First 80 chars: {file_content[:80]}")
+                    print(f"[AGG_WORKER] 📝 Last 80 chars: {file_content[-80:]}")
+                    
+                    out.write(file_header)
+                    out.write(file_content)
+                    out.write(file_footer)
+                    
+                    # Verify write by checking file position
+                    current_pos = out.tell()
+                    print(f"[AGG_WORKER] ✅ Written, file position now: {current_pos:,}")
+                    
+                    # Update token counts
+                    current_chunk_tokens += total_file_tokens
+                    total_tokens += total_file_tokens
+                    files_processed += 1
+                    
                 except Exception as e:
-                    content_parts.append(f"\n[Error reading {rel_path}: {e}]\n")
+                    print(f"[AGG_WORKER] ⚠️ Error processing {rel_path}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
 
-            self.finished.emit("".join(content_parts), total_tokens)
+            agg_loop_time = (time.time() - agg_loop_start) * 1000
+            print(f"[AGG_WORKER] 🔄 Aggregation loop processed {files_processed} files in {agg_loop_time:.2f}ms")
+            print(f"[AGG_WORKER] 📊 Total tokens: {total_tokens:,} across {len(self.result_file_paths)} chunk(s)")
+
+            try:
+                out.write("\n")
+                out.close()
+                if current_chunk_tokens > 0:
+                    self.result_chunk_tokens.append(current_chunk_tokens)
+                    print(f"[AGG_WORKER] 📦 Final chunk {len(self.result_chunk_tokens)} completed with {current_chunk_tokens:,} tokens")
+            except Exception:
+                pass
+                
+            self.progress_signal.emit(100)
+            self.token_progress_signal.emit(total_tokens)
+            self.finished_signal.emit(True, total_tokens)
 
         except Exception as e:
-            self.finished.emit(f"Error during aggregation: {str(e)}", 0)
+            self.error_message = str(e)
+            print(f"[AGG_WORKER] ❌ Fatal error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.finished_signal.emit(False, 0)
 
     def cancel(self):
         self._is_cancelled = True
+
+
+class SaveWorker(QThread):
+    """Background worker for saving workspace state to avoid UI freezes."""
+    finished_signal = Signal(bool, str)  # success, message
+
+    def __init__(self, workspaces, base_path=None, parent=None):
+        super().__init__(parent)
+        # Deep copy data to ensure thread safety
+        import copy
+        try:
+            self.workspaces = copy.deepcopy(workspaces)
+        except Exception as e:
+            print(f"[SAVE_WORKER] ⚠️ Deep copy failed: {e}")
+            self.workspaces = workspaces
+            
+        self.base_path = base_path
+
+    def run(self):
+        try:
+            import time
+            start_time = time.time()
+            print(f"[SAVE_WORKER] 💾 Saving workspace in background...")
+            
+            from core import workspace_manager
+            success = workspace_manager.save_workspaces(self.workspaces, base_path=self.base_path)
+            
+            total_time = (time.time() - start_time) * 1000
+            if success:
+                msg = f"Workspace saved in {total_time:.2f}ms"
+                print(f"[SAVE_WORKER] ✅ {msg}")
+                self.finished_signal.emit(True, msg)
+            else:
+                msg = "Failed to save workspace"
+                print(f"[SAVE_WORKER] ❌ {msg}")
+                self.finished_signal.emit(False, msg)
+                
+        except Exception as e:
+            print(f"[SAVE_WORKER] ❌ Error in save worker: {e}")
+            self.finished_signal.emit(False, str(e))
 
 
 class MainWindow(QMainWindow):
@@ -153,7 +340,13 @@ class MainWindow(QMainWindow):
         # Aggregation Optimization - debounce + background worker
         self._aggregation_timer = QTimer()
         self._aggregation_timer.setSingleShot(True)
-        self._aggregation_timer.setInterval(200)  # Wait 200ms after last click
+        
+        # Save Optimization - debounce workspace saving
+        self._save_debounce_timer = QTimer()
+        self._save_debounce_timer.setSingleShot(True)
+        self._save_debounce_timer.setInterval(1000)  # Wait 1 second after last change
+        self._save_debounce_timer.timeout.connect(self._perform_save_workspace_state)
+        self._aggregation_timer.setInterval(500)  # Wait 500ms after last click
         self._aggregation_timer.timeout.connect(self._perform_background_aggregation)
         self._current_agg_worker = None
 
@@ -308,6 +501,8 @@ class MainWindow(QMainWindow):
         self.instructions_panel.manage_button.clicked.connect(self._open_custom_instructions_dialog)
         self.instructions_panel.template_selected.connect(self._apply_instruction_template)
         self.instructions_panel.instructions_changed.connect(self._on_instructions_changed)
+        self.aggregation_view.save_chunks_requested.connect(self._on_save_chunks_requested)
+        self.aggregation_view.start_aggregation_requested.connect(self._on_manual_start_requested)
 
         # Selection Manager Panel
         self.selection_manager_panel.group_changed.connect(self.sel_ctl.on_group_changed)
@@ -325,21 +520,44 @@ class MainWindow(QMainWindow):
     
     def _on_scan_complete(self, items: list):
         """Handle scan completion from streamlined scanner."""
+        import time
+        start_time = time.time()
         print(f"[STREAMLINED] 🎉 Scan complete: {len(items)} items")
         
         # Reset scan flag to allow future scans
         self._scan_in_progress = False
         
+        # CRITICAL FIX: Get pending restore paths from scan controller and set them on tree panel
+        if hasattr(self, 'scan_ctl') and hasattr(self.scan_ctl, 'pending_restore_paths'):
+            pending_paths = self.scan_ctl.pending_restore_paths
+            if pending_paths:
+                print(f"[MAIN_WINDOW] 🔄 Setting {len(pending_paths)} pending restore paths on tree panel")
+                self.tree_panel.set_pending_restore_paths(pending_paths)
+                # Clear the pending paths from scan controller after transferring
+                self.scan_ctl.pending_restore_paths.clear()
+            else:
+                print(f"[MAIN_WINDOW] ℹ️ No pending restore paths from scan controller")
+        
         # Update tree panel with results
+        populate_start = time.time()
         self.tree_panel.populate_tree(items, self.current_folder_path)
+        populate_time = (time.time() - populate_start) * 1000
+        print(f"[MAIN_WINDOW] 🌳 Tree population took {populate_time:.2f}ms")
+
         self.tree_panel.show_loading(False)
         
         # Update aggregation and tokens
+        agg_start = time.time()
         self.update_aggregation_and_tokens()
+        agg_time = (time.time() - agg_start) * 1000
+        print(f"[MAIN_WINDOW] 🔄 Aggregation update triggered in {agg_time:.2f}ms")
         
         # Show completion message
         file_count = len([item for item in items if not item[1]])  # Count files
         self.statusBar().showMessage(f"Scan complete: {len(items)} items, {file_count} files tokenized", 3000)
+        
+        total_time = (time.time() - start_time) * 1000
+        print(f"[MAIN_WINDOW] ✅ _on_scan_complete finished in {total_time:.2f}ms")
     
     def _on_scan_error(self, error: str):
         """Handle scan errors from streamlined scanner."""
@@ -385,21 +603,22 @@ class MainWindow(QMainWindow):
         current_ws["instructions"] = self.instructions_panel.get_text()
         current_ws['active_selection_group'] = self.active_selection_group
 
-        if self.active_selection_group in self.selection_groups:
-            checked_paths = self.tree_panel.get_checked_paths(relative=True)
-            if isinstance(self.selection_groups[self.active_selection_group], dict):
-                self.selection_groups[self.active_selection_group]["checked_paths"] = checked_paths
         current_ws['selection_groups'] = self.selection_groups
         
         print(f"[STATE] ✅ Updated workspace state: {clean_workspace_name}")
 
     def _save_current_workspace_state(self):
+        """Save current workspace state to file."""
+        import time
+        start_time = time.time()
         if self.workspaces:
-            workspace_manager.save_workspaces(self.workspaces)
+            workspace_manager.save_workspaces(self.workspaces, base_path=self.testing_path)
             # Show status message for workspace save
             if self.current_workspace_name:
                 clean_name = self.current_workspace_name.split(' (')[0].strip()
                 self.statusBar().showMessage(f"Workspace '{clean_name}' saved.", 3000)
+        save_time = (time.time() - start_time) * 1000
+        print(f"[SAVE] 💾 save_workspaces took {save_time:.2f}ms")
 
     def _switch_workspace(self, workspace_name, initial_load=False):
         """Atomic workspace switch with complete data validation and error handling."""
@@ -768,8 +987,22 @@ class MainWindow(QMainWindow):
 
 
     def update_aggregation_and_tokens(self):
-        """Starts the debounce timer. Does NOT calculate immediately."""
-        # Reset timer to wait for user to stop clicking
+        """Starts the debounce timer or requires manual start based on size."""
+        manual_threshold = 250000
+        current_tokens = 0
+        if hasattr(self.tree_panel, "get_selected_token_count"):
+            try:
+                current_tokens = self.tree_panel.get_selected_token_count()
+                if hasattr(self, "aggregation_view"):
+                    self.aggregation_view.update_token_count(current_tokens)
+            except Exception as e:
+                print(f"[MAIN_WINDOW] ⚠️ Error updating token count: {e}")
+        if current_tokens > manual_threshold:
+            if hasattr(self, "aggregation_view"):
+                self.aggregation_view.set_manual_start_visible(True, current_tokens)
+            return
+        if hasattr(self, "aggregation_view"):
+            self.aggregation_view.set_manual_start_visible(False, current_tokens)
         self._aggregation_timer.start()
 
     def _setup_watcher_indicator(self):
@@ -876,6 +1109,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[WINDOW] ⚠️ Error during file watcher cleanup: {e}")
         
+        # Ensure background save worker is finished
+        try:
+            if hasattr(self, '_save_worker') and self._save_worker and self._save_worker.isRunning():
+                self._save_worker.wait()
+        except Exception:
+            pass
+        
         # Stop streamlined scanner
         try:
             if hasattr(self, 'streamlined_scanner') and self.streamlined_scanner:
@@ -973,13 +1213,44 @@ class MainWindow(QMainWindow):
     def _on_tree_selection_changed(self):
         """Handle tree panel selection changes and save workspace state."""
         if self.current_workspace_name and self.workspaces:
+            # DEBOUNCE: Don't save immediately, restart the timer
+            self._save_debounce_timer.start()
+            # print(f"[TREE] ⏳ Selection changed, save timer restarted")
+
+    @Slot()
+    def _perform_save_workspace_state(self):
+        """Actually perform the workspace save after debounce timer fires."""
+        if self.current_workspace_name and self.workspaces:
             try:
-                print(f"[TREE] 📋 File selection changed, saving workspace state...")
+                # Update state before saving
                 self._update_current_workspace_state()
-                self._save_current_workspace_state()
-                print(f"[TREE] ✅ Workspace state saved after selection change")
+                
+                # Start background save
+                if hasattr(self, '_save_worker') and self._save_worker and self._save_worker.isRunning():
+                    # If a save is already running, we should probably wait or queue it
+                    # For now, let's just log it and skip to avoid race conditions
+                    print(f"[TREE] ⏳ Save already in progress, skipping intermediate save")
+                    return
+
+                self._save_worker = SaveWorker(self.workspaces, self.testing_path)
+                self._save_worker.finished_signal.connect(self._on_save_finished)
+                self._save_worker.start()
+                
             except Exception as e:
-                print(f"[TREE] ❌ Error saving workspace state after selection change: {e}")
+                print(f"[TREE] ❌ Error initiating background save: {e}")
+
+    @Slot(bool, str)
+    def _on_save_finished(self, success, message):
+        """Handle save completion."""
+        if success:
+            # Optional: Update status bar only if needed, to avoid noise
+            # self.statusBar().showMessage(message, 2000)
+            pass
+        else:
+            self.statusBar().showMessage(f"Save failed: {message}", 5000)
+            
+        # Clean up worker
+        self._save_worker = None
 
     @Slot()
     def _on_checkbox_changed(self):
@@ -1021,8 +1292,22 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def update_aggregation_and_tokens(self):
-        """Starts the debounce timer. Does NOT calculate immediately."""
-        # Reset timer to wait for user to stop clicking
+        """Starts debounce or requires manual start when selection is large."""
+        manual_threshold = 250000
+        current_tokens = 0
+        if hasattr(self.tree_panel, "get_selected_token_count"):
+            try:
+                current_tokens = self.tree_panel.get_selected_token_count()
+                if hasattr(self, "aggregation_view"):
+                    self.aggregation_view.update_token_count(current_tokens)
+            except Exception as e:
+                print(f"[MAIN_WINDOW] ⚠️ Error updating token count: {e}")
+        if current_tokens > manual_threshold:
+            if hasattr(self, "aggregation_view"):
+                self.aggregation_view.set_manual_start_visible(True, current_tokens)
+            return
+        if hasattr(self, "aggregation_view"):
+            self.aggregation_view.set_manual_start_visible(False, current_tokens)
         self._aggregation_timer.start()
 
     def _perform_background_aggregation(self):
@@ -1030,36 +1315,129 @@ class MainWindow(QMainWindow):
         if not self.current_folder_path:
             return
 
-        # Kill existing worker if running
+        # 1. ASYNC CANCELLATION: flag old worker to stop and disconnect signals
         if self._current_agg_worker and self._current_agg_worker.isRunning():
             self._current_agg_worker.cancel()
-            self._current_agg_worker.wait()
+            try:
+                self._current_agg_worker.finished_signal.disconnect()
+            except Exception:
+                pass
+            try:
+                self._current_agg_worker.progress_signal.disconnect()
+            except Exception:
+                pass
+            # Do NOT call .wait() here; let it finish in the background
+            self._current_agg_worker = None
 
-        # Show loading state
+        # 2. Show loading state
         if hasattr(self, "aggregation_view"):
             self.aggregation_view.set_loading(True)
 
-        # Get fresh data
+        # 3. Start new worker with fresh data
         checked = set()
         if hasattr(self.tree_panel, "get_checked_paths"):
             checked = self.tree_panel.get_checked_paths(relative=True, return_set=True)
+            print(f"[AGGREGATION] 📋 Retrieved {len(checked)} checked paths from tree panel")
+            if checked:
+                print(f"[AGGREGATION] 📋 First 3 checked paths: {list(checked)[:3]}")
+            else:
+                print(f"[AGGREGATION] ⚠️ WARNING: No checked paths retrieved from tree panel!")
+                # Debug: Check if the model has any checked files
+                if hasattr(self.tree_panel, 'file_tree_view') and hasattr(self.tree_panel.file_tree_view, 'model'):
+                    model_checked = self.tree_panel.file_tree_view.model._checked_files
+                    print(f"[AGGREGATION] 🔍 Model _checked_files cache has {len(model_checked)} entries")
+                    if model_checked:
+                        print(f"[AGGREGATION] 🔍 First 3 from cache: {list(model_checked)[:3]}")
+
+        manual_threshold = 250000
+        current_tokens = 0
+        try:
+            if hasattr(self.tree_panel, "get_selected_token_count"):
+                current_tokens = self.tree_panel.get_selected_token_count()
+        except Exception:
+            current_tokens = 0
+        if current_tokens > manual_threshold or len(checked) > 200:
+            if hasattr(self, "aggregation_view"):
+                self.aggregation_view.set_manual_start_visible(True, current_tokens)
+                self.aggregation_view.set_loading(False)
+            return
 
         prompt = ""
         if hasattr(self, "instructions_panel"):
             prompt = self.instructions_panel.get_text()
+            
+        print(f"[MAIN_WINDOW] 🚀 Starting background aggregation for {len(checked)} files...")
 
-        # Start Worker
         self._current_agg_worker = AggregationWorker(self.current_folder_path, checked, prompt)
-        self._current_agg_worker.finished.connect(self._on_aggregation_finished)
+        self._current_agg_worker.finished_signal.connect(self._on_aggregation_finished)
+        self._current_agg_worker.progress_signal.connect(self._on_aggregation_progress)
+        self._agg_last_tokens = 0
+        try:
+            self._current_agg_worker.token_progress_signal.connect(self._on_aggregation_token_progress)
+        except Exception:
+            pass
         self._current_agg_worker.start()
 
-    @Slot(str, int)
-    def _on_aggregation_finished(self, content, tokens):
-        """Called when aggregation thread is done."""
+    @Slot(bool, int)
+    def _on_aggregation_finished(self, success, tokens):
+        """Called when aggregation thread is done. Reads data from worker instance."""
+        if not hasattr(self, "aggregation_view"):
+            return
+
+        # Ensure we are handling the currently active worker
+        worker = self.sender()
+        if worker is None or worker != self._current_agg_worker:
+            return
+
+        if success:
+            paths = getattr(worker, "result_file_paths", [])
+            # Use chunked content for ANY number of chunk files (including 1)
+            if paths and len(paths) >= 1:
+                chunk_tokens = getattr(worker, "result_chunk_tokens", [])
+                self.aggregation_view.set_chunked_content(paths, tokens, chunk_tokens)
+                print(f"[MAIN_WINDOW] ✅ Aggregation complete: {len(paths)} chunk(s), {tokens:,} total tokens")
+            else:
+                # Fallback for in-memory content (should not happen with new worker)
+                final_content = worker.result_text
+                self.aggregation_view.set_content(final_content, tokens)
+                print(f"[MAIN_WINDOW] ✅ Aggregation complete: in-memory, {tokens:,} tokens")
+        else:
+            self.aggregation_view.set_content(f"Error: {worker.error_message}", 0)
+            print(f"[MAIN_WINDOW] ❌ Aggregation failed: {worker.error_message}")
+
+        self.aggregation_view.set_loading(False)
+        self._current_agg_worker = None
+
+    @Slot(int)
+    def _on_aggregation_progress(self, percent: int):
+        """Update loading text with background aggregation progress."""
         if hasattr(self, "aggregation_view"):
-            # Note: we could refine tokens using the main cache if needed.
-            self.aggregation_view.set_content(content, tokens)
-            self.aggregation_view.set_loading(False)
+            tokens = getattr(self, "_agg_last_tokens", 0)
+            self.aggregation_view.update_loading_text(f"Processing... {percent}% • ~{tokens:,} tokens")
+
+    @Slot(int)
+    def _on_aggregation_token_progress(self, tokens: int):
+        self._agg_last_tokens = tokens
+
+    @Slot(list)
+    def _on_save_chunks_requested(self, file_paths: list):
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            target_dir = QFileDialog.getExistingDirectory(self, "Select Folder to Save Chunks")
+            if not target_dir:
+                return
+            import shutil, os
+            for idx, src in enumerate(file_paths or []):
+                name = f"aggregation_chunk_{idx+1:02d}.md"
+                dst = os.path.join(target_dir, name)
+                shutil.copyfile(src, dst)
+            self.statusBar().showMessage(f"Saved {len(file_paths)} chunks to {target_dir}", 4000)
+        except Exception as e:
+            print(f"[MAIN_WINDOW] ❌ Error saving chunks: {e}")
+
+    @Slot()
+    def _on_manual_start_requested(self):
+        self._perform_background_aggregation()
 
     def _generate_file_tree_string(self, checked_paths):
         """Generate a file tree string from checked paths."""
